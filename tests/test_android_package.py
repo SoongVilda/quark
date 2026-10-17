@@ -48,7 +48,10 @@ def prefix(path, machine, extra=None, z_target="/"):
         member.type, member.linkname = tarfile.SYMTYPE, z_target
         archive.addfile(member)
         for member in extra if isinstance(extra, list) else ([extra] if extra else []):
-            archive.addfile(member)
+            if isinstance(member, tuple):
+                archive.addfile(member[0], io.BytesIO(member[1]))
+            else:
+                archive.addfile(member)
 
 
 class PackageTests(unittest.TestCase):
@@ -205,6 +208,40 @@ class PackageTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "SHA-256"):
             self.module.normalize_prefix(self.pack, output, "x86_64", "0" * 64)
         self.assertFalse(output.exists())
+
+    def test_prefix_normalization_removes_appledouble_metadata(self):
+        metadata = tarfile.TarInfo(".wine/drive_c/windows/system32/._example.dll")
+        metadata.size = 249
+        with tarfile.open(self.root / "metadata.tar", "w") as archive:
+            with tarfile.open(self.pack) as original:
+                for member in original:
+                    archive.addfile(member, original.extractfile(member) if member.isfile() else None)
+            archive.addfile(metadata, io.BytesIO(b"\x00\x05\x16\x07" + b"\0" * 245))
+        with (self.root / "metadata.tar").open("rb") as source:
+            import lzma
+            with lzma.open(self.pack, "wb") as target:
+                target.write(source.read())
+        normalized = self.root / "normalized.txz"
+        try:
+            result = self.module.normalize_prefix(self.pack, normalized, "x86_64",
+                                                  hashlib.sha256(self.pack.read_bytes()).hexdigest())
+        except ValueError as exc:
+            self.fail(f"AppleDouble metadata prevents prefix normalization: {exc}")
+        self.assertIn(metadata.name, result["removed_metadata_files"])
+        with tarfile.open(normalized) as archive:
+            self.assertNotIn(metadata.name, archive.getnames())
+            self.assertIn(".wine/drive_c/windows/system32/example.dll", archive.getnames())
+
+    def test_prefix_retains_legacy_ne_data_without_treating_it_as_pe(self):
+        legacy = bytearray(pe(0x14c))
+        legacy[128:132] = b"NE\0\0"
+        member = tarfile.TarInfo(".wine/drive_c/windows/rundll.exe")
+        member.size = len(legacy)
+        prefix(self.pack, 0x8664, [(member, bytes(legacy))])
+        try:
+            self.validate()
+        except ValueError as exc:
+            self.fail(f"Legacy NE data must not be mistaken for malformed PE: {exc}")
 
     def test_rejects_unsafe_prefix_members_and_links(self):
         for name, target in [("../escaped", None), (".wine/escape", "/etc"),

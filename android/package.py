@@ -26,7 +26,7 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def pe_machine(source, size: int) -> int:
+def pe_machine(source, size: int, allow_ne: bool = False):
     header = source.read(64)
     if len(header) != 64 or header[:2] != b"MZ":
         raise ValueError("Invalid PE header")
@@ -35,6 +35,8 @@ def pe_machine(source, size: int) -> int:
         raise ValueError("Truncated PE header")
     source.seek(offset)
     signature = source.read(6)
+    if allow_ne and signature[:2] == b"NE":
+        return None  # Old Wine templates retain inert 16-bit Windows resources.
     if len(signature) != 6 or signature[:4] != b"PE\0\0":
         raise ValueError("Invalid PE signature")
     return struct.unpack_from("<H", signature, 4)[0]
@@ -98,7 +100,9 @@ def validate_prefix(path: Path, expected_machine: int) -> str:
                     raise ValueError(f"Unsupported prefix member: {member.name}")
                 if member.isfile() and member.name.endswith((".dll", ".exe", ".drv")):
                     with archive.extractfile(member) as source:
-                        machine = pe_machine(source, member.size)
+                        machine = pe_machine(source, member.size, allow_ne=True)
+                    if machine is None:
+                        continue
                     if machine not in (0x14c, expected_machine):
                         raise ValueError(f"Wrong prefix architecture: {member.name}")
                     native |= machine == expected_machine
@@ -119,11 +123,17 @@ def normalize_prefix(source: Path, output: Path, arch: str, expected_sha256: str
         raise ValueError("Invalid normalized prefix output or architecture")
     output.parent.mkdir(parents=True, exist_ok=True)
     removed = []
+    removed_metadata = []
     with tempfile.TemporaryDirectory(prefix=".quark-prefix-", dir=output.parent) as work:
         normalized = Path(work) / "prefix.txz"
-        with tarfile.open(source, "r:xz") as original, tarfile.open(normalized, "w:xz") as archive:
+        with tarfile.open(source, "r:xz") as original, tarfile.open(normalized, "w:xz", preset=1) as archive:
             for member in original:
                 name = str(PurePosixPath(member.name))
+                if member.isfile() and PurePosixPath(name).name.startswith("._"):
+                    with original.extractfile(member) as content:
+                        if content.read(4) == b"\x00\x05\x16\x07":
+                            removed_metadata.append(name)
+                            continue
                 if member.issym() and name in (".wine/dosdevices/d:", ".wine/dosdevices/e:"):
                     removed.append({"path": name, "target": member.linkname})
                     continue
@@ -136,7 +146,8 @@ def normalize_prefix(source: Path, output: Path, arch: str, expected_sha256: str
         digest = validate_prefix(normalized, ARCHES[arch]["prefix_pe"])
         normalized.replace(output)
     return {"source_sha256": expected_sha256, "normalized_sha256": digest,
-            "removed_drive_links": removed, "z_drive": "/"}
+            "removed_drive_links": removed, "removed_metadata_files": removed_metadata,
+            "z_drive": "/"}
 
 
 def validate_tree(tree: Path, prefix_pack: Path, arch: str) -> dict:

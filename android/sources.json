@@ -11,16 +11,28 @@
   },
   "prefix": {
     "repository": "https://github.com/GameNative/bionic-prefix-files",
-    "revision": "6286ac456e4a8376e053ce1ce4f565bd37cc4af4"
+    "revision": "6286ac456e4a8376e053ce1ce4f565bd37cc4af4",
+    "architectures": {
+      "x86_64": {
+        "file": "prefixPack-x86_64-11.txz",
+        "sha256": "d8d1d8af905af40ae7f37114de1cf87575f88827fd8e2780cd2f92d7852a8ed0"
+      },
+      "arm64ec": {
+        "file": "prefixPack-arm64ec-11.txz",
+        "sha256": "ade99dc80b17086a269c038c9bc50167902103a9a61df763cba4d613543ff12a"
+      }
+    }
   },
   "ndk": {
     "version": "27.3.13750724",
-    "url": "https://dl.google.com/android/repository/android-ndk-r27d-linux.zip"
+    "url": "https://dl.google.com/android/repository/android-ndk-r27d-linux.zip",
+    "sha256": "601246087a682d1944e1e16dd85bc6e49560fe8b6d61255be2829178c8ed15d9"
   },
   "llvm_mingw": {
     "version": "20250920",
     "directory": "llvm-mingw-20250920-ucrt-ubuntu-22.04-x86_64",
-    "url": "https://github.com/bylaws/llvm-mingw/releases/download/20250920/llvm-mingw-20250920-ucrt-ubuntu-22.04-x86_64.tar.xz"
+    "url": "https://github.com/bylaws/llvm-mingw/releases/download/20250920/llvm-mingw-20250920-ucrt-ubuntu-22.04-x86_64.tar.xz",
+    "sha256": "8dd8c34fc051a50c2fae86015f35057f8aae93fe1e19b34537ef1269a8b4c772"
   },
   "rust": {
     "version": "1.90.0"
