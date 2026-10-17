@@ -1,0 +1,51 @@
+{
+  "schema": 1,
+  "version_name": "quark-patched-0.1.0-proton-11.0-2",
+  "wine": {
+    "repository": "https://github.com/GameNative/proton-wine.git",
+    "revision": "b2e449b22ba46b9ceb3a51623253cd9693ccc409"
+  },
+  "ntsync": {
+    "repository": "https://github.com/GameNative/ntsync-android.git",
+    "revision": "7ce6435e5979b1cb5341aa4b299f31e8937fe121"
+  },
+  "prefix": {
+    "repository": "https://github.com/GameNative/bionic-prefix-files",
+    "revision": "6286ac456e4a8376e053ce1ce4f565bd37cc4af4"
+  },
+  "ndk": {
+    "version": "27.3.13750724",
+    "url": "https://dl.google.com/android/repository/android-ndk-r27d-linux.zip"
+  },
+  "llvm_mingw": {
+    "version": "20250920",
+    "directory": "llvm-mingw-20250920-ucrt-ubuntu-22.04-x86_64",
+    "url": "https://github.com/bylaws/llvm-mingw/releases/download/20250920/llvm-mingw-20250920-ucrt-ubuntu-22.04-x86_64.tar.xz"
+  },
+  "rust": {
+    "version": "1.90.0"
+  },
+  "termux": {
+    "release": "build-20260218",
+    "architectures": {
+      "arm64ec": {
+        "file": "termuxfs-aarch64.tar",
+        "sha256": "b088df560c9395d7c2cc797d208d8a727d1f06fc70e5ea34eef6118ef64a7e42"
+      },
+      "x86_64": {
+        "file": "termuxfs-x86_64.tar",
+        "sha256": "24f9223c2d268e0c8660de2ff9b6c11ef10f60e03a3f20a6a14a96dd703222ee"
+      }
+    }
+  },
+  "patches": [
+    {
+      "path": "patches/wine/004-ntdll-thread-stack-floor.patch",
+      "sha256": "78fd6668c51e72e2fd5fc8a96db1042040084396cbdfb958addeeab906dd0f33"
+    },
+    {
+      "path": "patches/gamenative/002-lsteamclient-non-fatal-steam-call.patch",
+      "sha256": "96ee6efc606888ec470f8253cc18aeec6b09de5cdf8a1c9b83ed81bb0869161e"
+    }
+  ]
+}

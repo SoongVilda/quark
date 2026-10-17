@@ -1,0 +1,37 @@
+Subject: lsteamclient: Preserve non-fatal Steam calls on GameNative
+
+Android rebase of patches/lsteamclient/002 against GameNative/proton-wine
+commit b2e449b22ba46b9ceb3a51623253cd9693ccc409. Keep its CALLDIAG
+instrumentation and Android Steam bridge; remove the deliberate fault and
+assertion exactly as in the desktop Quark patch. This differs from Proton
+by returning failed call status instead of forcing process termination.
+
+diff --git a/lsteamclient/steamclient_main.c b/lsteamclient/steamclient_main.c
+--- a/lsteamclient/steamclient_main.c
++++ b/lsteamclient/steamclient_main.c
+@@ -100,11 +100,9 @@
+         ERR( "CALLDIAG: SLOW call %s took %lld us (code=%u)\n", name, us, code );
+ 
+     if (status == STATUS_ACCESS_VIOLATION)
+-    {
+-        ERR( "Access violation in %s.\n", name );
+-        *(volatile int *)0xbeef |= 0;
+-    }
+-    if (status) WARN( "%s failed, status %#x\n", name, (UINT)status );
++        ERR( "Access violation in %s (non-fatal).\n", name );
++    else if (status)
++        WARN( "%s failed, status %#x\n", name, (UINT)status );
+     return status;
+ }
+ 
+diff --git a/lsteamclient/unixlib.h b/lsteamclient/unixlib.h
+--- a/lsteamclient/unixlib.h
++++ b/lsteamclient/unixlib.h
+@@ -414,7 +414,6 @@
+ #define STEAMCLIENT_CALL( code, args )                                     \
+     ({                                                                     \
+         NTSTATUS status = steamclient_call( unix_ ## code, args, #code );  \
+-        assert( !status );                                                 \
+         status;                                                            \
+     })
+ 
