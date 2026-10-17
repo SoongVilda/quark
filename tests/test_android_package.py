@@ -1,0 +1,246 @@
+#!/usr/bin/env python3
+"""Exercise archive validation with small, explicitly non-runnable fixtures."""
+import hashlib
+import importlib.util
+import io
+import json
+from pathlib import Path
+import struct
+import subprocess
+import tarfile
+import tempfile
+import unittest
+from unittest.mock import patch
+
+REPO = Path(__file__).resolve().parents[1]
+
+
+def elf(machine):
+    data = bytearray(256)
+    data[:7] = b"\x7fELF\x02\x01\x01"
+    struct.pack_into("<HHIQQQIHHHHHH", data, 16, 3, machine, 1, 0, 64, 0, 0,
+                     64, 56, 2, 0, 0, 0)
+    struct.pack_into("<IIQQQQQQ", data, 64, 1, 5, 0, 0, 0, 256, 256, 16384)
+    interpreter = b"/system/bin/linker64\0"
+    struct.pack_into("<IIQQQQQQ", data, 120, 3, 4, 192, 192, 192,
+                     len(interpreter), len(interpreter), 1)
+    data[192:192 + len(interpreter)] = interpreter
+    return bytes(data)
+
+
+def pe(machine):
+    data = bytearray(256)
+    data[:2] = b"MZ"
+    struct.pack_into("<I", data, 60, 128)
+    struct.pack_into("<4sH", data, 128, b"PE\0\0", machine)
+    return bytes(data)
+
+
+def prefix(path, machine, extra=None, z_target="/"):
+    with tarfile.open(path, "w:xz") as archive:
+        for name, content in [(".wine/system.reg", b"WINE REGISTRY Version 2\n"),
+                              (".wine/user.reg", b"WINE REGISTRY Version 2\n"),
+                              (".wine/drive_c/windows/system32/example.dll", pe(machine))]:
+            member = tarfile.TarInfo(name)
+            member.size = len(content)
+            archive.addfile(member, io.BytesIO(content))
+        member = tarfile.TarInfo(".wine/dosdevices/z:")
+        member.type, member.linkname = tarfile.SYMTYPE, z_target
+        archive.addfile(member)
+        for member in extra if isinstance(extra, list) else ([extra] if extra else []):
+            archive.addfile(member)
+
+
+class PackageTests(unittest.TestCase):
+    def setUp(self):
+        path = REPO / "android/package.py"
+        self.assertTrue(path.is_file(), "Android WCP packaging is missing")
+        spec = importlib.util.spec_from_file_location("android_package", path)
+        self.module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.module)
+        self.temp = tempfile.TemporaryDirectory(prefix="quark package fixture ")
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.tree = self.root / "installed Wine"
+        self.pack = self.root / "prefix.txz"
+        self.output = self.root / "test-fixture.wcp"
+        self.make_tree("x86_64")
+        self.metadata = {"architecture": "x86_64", "compilation_status": "compiled",
+                         "version_name": "quark-patched-test-fixture", "quark_revision": "1" * 40,
+                         "wine_revision": "2" * 40, "patches": [{"path": "test.patch", "sha256": "3" * 64}],
+                         "toolchains": {"test": "fixture-only"}}
+
+    def make_tree(self, arch):
+        self.arch = arch
+        unix = "aarch64" if arch == "arm64ec" else "x86_64"
+        machine = 183 if arch == "arm64ec" else 62
+        windows = "arm64ec" if arch == "arm64ec" else "x86_64"
+        self.unix_dir = self.tree / "lib/wine" / (unix + "-unix")
+        self.windows_dir = self.tree / "lib/wine" / (windows + "-windows")
+        self.unix_dir.mkdir(parents=True, exist_ok=True)
+        self.windows_dir.mkdir(parents=True, exist_ok=True)
+        (self.tree / "bin").mkdir(exist_ok=True)
+        for name in ["wine", "ntdll.so", "lsteamclient.so"]:
+            p = self.unix_dir / name
+            p.write_bytes(elf(machine))
+            p.chmod(0o755)
+        (self.tree / "bin/wine").symlink_to("../lib/wine/" + unix + "-unix/wine")
+        server = self.tree / "bin/wineserver"
+        server.write_bytes(elf(machine))
+        server.chmod(0o755)
+        for name in ["ntdll.dll", "lsteamclient.dll", "steam.exe"]:
+            (self.windows_dir / name).write_bytes(pe(0xa641 if arch == "arm64ec" else 0x8664))
+        docs = self.tree / "share/doc/quark-gamenative"
+        docs.mkdir(parents=True, exist_ok=True)
+        for name in ["Wine-LICENSE", "COPYING.LIB"]:
+            (docs / name).write_text("Fixture license; not a runnable Wine distribution.\n")
+        prefix(self.pack, 0xaa64 if arch == "arm64ec" else 0x8664)
+
+    def validate(self):
+        return self.module.validate_tree(self.tree, self.pack, self.arch)
+
+    def package(self, output=None):
+        return self.module.package_wcp(self.tree, self.pack, self.arch,
+                                       output or self.output, self.metadata)
+
+    def test_validates_both_architectures_and_prefix_identity(self):
+        self.assertEqual(self.validate()["prefix_sha256"], hashlib.sha256(self.pack.read_bytes()).hexdigest())
+        import shutil
+        shutil.rmtree(self.tree)
+        self.make_tree("arm64ec")
+        self.assertEqual(self.validate()["architecture"], "arm64ec")
+
+    def test_packages_expected_profile_manifest_and_deterministic_payload(self):
+        self.package()
+        data = subprocess.check_output(["zstd", "-q", "-d", "-c", str(self.output)])
+        with tarfile.open(fileobj=io.BytesIO(data)) as archive:
+            names = archive.getnames()
+            self.assertIn("bin/wine", names)
+            self.assertIn("prefixPack.txz", names)
+            self.assertIn("licenses/Quark-LICENSE", names)
+            profile = json.load(archive.extractfile("profile.json"))
+            self.assertEqual(profile["type"], "Proton")
+            self.assertIn("quark-patched", profile["versionName"])
+            self.assertEqual(profile["wine"], {"binPath": "bin", "libPath": "lib", "prefixPack": "prefixPack.txz"})
+            manifest = json.load(archive.extractfile("build-manifest.json"))
+            self.assertEqual(manifest["wine_revision"], self.metadata["wine_revision"])
+            self.assertEqual(manifest["package"]["prefix_sha256"], hashlib.sha256(self.pack.read_bytes()).hexdigest())
+        checksum = Path(str(self.output) + ".sha256").read_text().split()[0]
+        self.assertEqual(checksum, hashlib.sha256(self.output.read_bytes()).hexdigest())
+        second = self.root / "second-test-fixture.wcp"
+        self.package(second)
+        self.assertEqual(self.output.read_bytes(), second.read_bytes())
+
+    def test_rejects_wrong_elf_or_pe_architecture(self):
+        for p, content in [(self.unix_dir / "ntdll.so", elf(183)),
+                           (self.windows_dir / "ntdll.dll", pe(0x14c))]:
+            old = p.read_bytes()
+            with self.subTest(path=p.name):
+                p.write_bytes(content)
+                with self.assertRaisesRegex(ValueError, "architecture"):
+                    self.validate()
+                p.write_bytes(old)
+
+    def test_rejects_small_elf_page_alignment(self):
+        p = self.unix_dir / "ntdll.so"
+        data = bytearray(p.read_bytes())
+        struct.pack_into("<Q", data, 64 + 48, 4096)
+        p.write_bytes(data)
+        with self.assertRaisesRegex(ValueError, "16 KiB"):
+            self.validate()
+
+    def test_rejects_desktop_linux_loader(self):
+        p = self.unix_dir / "wine"
+        data = bytearray(p.read_bytes())
+        data[192:212] = b"/lib64/ld-linux.so.2\0"
+        p.write_bytes(data)
+        with self.assertRaisesRegex(ValueError, "Android"):
+            self.validate()
+
+    def test_rejects_missing_required_files_and_nonexecutable_loader(self):
+        loader = self.unix_dir / "wine"
+        loader.chmod(0o644)
+        with self.assertRaisesRegex(ValueError, "executable"):
+            self.validate()
+        loader.chmod(0o755)
+        (self.windows_dir / "lsteamclient.dll").unlink()
+        with self.assertRaisesRegex(ValueError, "required"):
+            self.validate()
+
+    def test_rejects_wrong_empty_and_corrupt_prefix_packs(self):
+        prefix(self.pack, 0xaa64)
+        with self.assertRaisesRegex(ValueError, "prefix.*architecture"):
+            self.validate()
+        with tarfile.open(self.pack, "w:xz"):
+            pass
+        with self.assertRaisesRegex(ValueError, "prefix"):
+            self.validate()
+        self.pack.write_bytes(b"not an xz archive")
+        with self.assertRaisesRegex(ValueError, "prefix"):
+            self.validate()
+
+    def test_normalizes_stale_cmod_drive_links_in_verified_prefix(self):
+        self.assertTrue(hasattr(self.module, "normalize_prefix"), "Verified prefix normalization is missing")
+        links = []
+        for letter, target in [("d", "/storage/emulated/0/Download"),
+                               ("e", "/data/data/com.winlator.cmod/storage")]:
+            member = tarfile.TarInfo(f".wine/dosdevices/{letter}:")
+            member.type, member.linkname = tarfile.SYMTYPE, target
+            links.append(member)
+        prefix(self.pack, 0x8664, links,
+               z_target="/data/user/0/com.winlator.cmod/files/imagefs/home/xuser-1/../..")
+        normalized = self.root / "normalized.txz"
+        digest = hashlib.sha256(self.pack.read_bytes()).hexdigest()
+        result = self.module.normalize_prefix(self.pack, normalized, "x86_64", digest)
+        self.assertEqual(result["source_sha256"], digest)
+        self.module.validate_prefix(normalized, 0x8664)
+        with tarfile.open(normalized) as archive:
+            self.assertNotIn(".wine/dosdevices/d:", archive.getnames())
+            self.assertNotIn(".wine/dosdevices/e:", archive.getnames())
+            self.assertEqual(archive.getmember(".wine/dosdevices/z:").linkname, "/")
+
+    def test_prefix_normalization_rejects_unexpected_source_hash(self):
+        self.assertTrue(hasattr(self.module, "normalize_prefix"), "Verified prefix normalization is missing")
+        output = self.root / "normalized.txz"
+        with self.assertRaisesRegex(ValueError, "SHA-256"):
+            self.module.normalize_prefix(self.pack, output, "x86_64", "0" * 64)
+        self.assertFalse(output.exists())
+
+    def test_rejects_unsafe_prefix_members_and_links(self):
+        for name, target in [("../escaped", None), (".wine/escape", "/etc"),
+                             (".wine/escape", "../../escape")]:
+            m = tarfile.TarInfo(name)
+            if target:
+                m.type, m.linkname = tarfile.SYMTYPE, target
+            with self.subTest(name=name, target=target):
+                prefix(self.pack, 0x8664, m)
+                with self.assertRaisesRegex(ValueError, "prefix"):
+                    self.validate()
+
+    def test_rejects_outer_absolute_broken_and_escaping_symlinks(self):
+        link = self.tree / "share/invalid"
+        for target in ["/etc/passwd", "missing", "../../prefix.txz"]:
+            with self.subTest(target=target):
+                link.symlink_to(target)
+                with self.assertRaisesRegex(ValueError, "symlink"):
+                    self.validate()
+                link.unlink()
+
+    def test_rejects_output_overlap_and_metadata_mismatch(self):
+        with self.assertRaisesRegex(ValueError, "output"):
+            self.package(self.tree / "inside.wcp")
+        self.metadata["architecture"] = "arm64ec"
+        with self.assertRaisesRegex(ValueError, "metadata"):
+            self.package()
+        self.assertFalse(self.output.exists())
+
+    def test_compressor_failure_publishes_no_final_package(self):
+        with patch.object(self.module.subprocess, "run", side_effect=subprocess.CalledProcessError(1, "zstd")):
+            with self.assertRaisesRegex(RuntimeError, "compress"):
+                self.package()
+        self.assertFalse(self.output.exists())
+        self.assertFalse(Path(str(self.output) + ".sha256").exists())
+
+
+if __name__ == "__main__":
+    unittest.main()
