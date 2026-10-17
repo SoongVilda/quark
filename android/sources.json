@@ -58,6 +58,10 @@
     {
       "path": "patches/gamenative/002-lsteamclient-non-fatal-steam-call.patch",
       "sha256": "96ee6efc606888ec470f8253cc18aeec6b09de5cdf8a1c9b83ed81bb0869161e"
+    },
+    {
+      "path": "patches/gamenative/003-android-preloader-16k-alignment.patch",
+      "sha256": "e03bb5de70246d43515426e08d1546de6c04b57d295eed41a22c0ff09f8c5137"
     }
   ]
 }

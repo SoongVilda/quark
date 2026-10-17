@@ -14,6 +14,7 @@ archive validation do not establish game compatibility or performance gains.
 | --- | --- |
 | Quark's 64-bit explicit thread-stack reserve floor | Apply `patches/wine/004-ntdll-thread-stack-floor.patch`. |
 | Quark's non-fatal Steam client call behavior | Apply the Android rebase under `patches/gamenative/`, preserving GameNative's call diagnostics. This deliberately differs from Proton's forced fault/assertion. |
+| Android preloader page alignment | Add an Android-only configure fix so the static preloader also links with 16 KiB load alignment. Its separate linker flags otherwise leave it at 4 KiB. |
 | Steam trampoline, EAC handling, Steam placeholder PID | Keep GameNative/Proton's existing implementations. |
 | PulseAudio timing patch | Do not apply: this base already uses a different callback-driven period timer. |
 | GNU libstdc++ link patch | Do not apply: the Android build uses its own C++ runtime/toolchain. |
