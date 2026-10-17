@@ -71,10 +71,14 @@ def make_stages(arch: str, source: Path, step: Path):
     return stages
 
 
-def adapt_script(original: str, android_patches=False) -> str:
+def adapt_script(original: str, android_patches=False, host_tools=False) -> str:
     """Relocate the pinned scripts' build paths; retain their compiler options."""
     adapted = original.replace("${HOME}", "${QUARK_ANDROID_WORKROOT}").replace("$HOME", "${QUARK_ANDROID_WORKROOT}")
     adapted = adapted.replace("$(nproc)", "${QUARK_ANDROID_JOBS}")
+    if host_tools:
+        if adapted.count("../configure ") != 1:
+            raise ValueError("Unrecognized native host-tools configure command")
+        adapted = adapted.replace("../configure ", "../configure --enable-win64 ")
     if android_patches:
         needle = "        git apply ./android/patches/$patch"
         if adapted.count(needle) != 1:
@@ -222,7 +226,7 @@ def build(arch: str, work: Path, output_dir: Path, cache: Path, jobs: int) -> Pa
     step.write_text(adapt_script(original_step.read_text(), android_patches=True))
     adapters[str(step.relative_to(work))] = sha256_file(step)
     step0 = source / "build-scripts/build-step0.sh"
-    step0.write_text(adapt_script(step0.read_text()))
+    step0.write_text(adapt_script(step0.read_text(), host_tools=True))
     adapters[str(step0.relative_to(work))] = sha256_file(step0)
     # Upstream scripts contain unquoted path expansions. A private, space-free
     # alias lets caller paths contain spaces without changing their build logic.

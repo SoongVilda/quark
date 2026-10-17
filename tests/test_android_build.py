@@ -89,6 +89,15 @@ class BuildTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "patch loop"):
             self.module.adapt_script("#!/bin/sh\ntrue\n", android_patches=True)
 
+    def test_host_tools_use_native_64_bit_without_multilib(self):
+        original = "#!/bin/sh\nmkdir wine-tools\ncd wine-tools\n../configure --without-x --without-vulkan\nmake -j$(nproc) __tooldeps__ nls/all\n"
+        try:
+            adapted = self.module.adapt_script(original, host_tools=True)
+        except TypeError:
+            self.fail("Host tools adapter must select the native 64-bit configuration")
+        self.assertIn("../configure --enable-win64 --without-x", adapted)
+        self.assertIn("__tooldeps__ nls/all", adapted)
+
     def test_download_hash_mismatch_never_reuses_cache_file(self):
         cached = self.root / "asset.tar"
         cached.write_bytes(b"unexpected existing file")
