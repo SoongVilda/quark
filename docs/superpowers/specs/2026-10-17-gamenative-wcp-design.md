@@ -1,6 +1,8 @@
 # Experimental GameNative WCP build
 
-Status: approved by the user on 2026-10-17; native implementation is in progress.
+Status: approved by the user on 2026-10-17; native implementation, both real
+architecture builds, package verification, and history export completed. Android
+device testing remains pending.
 
 ## Goal and interpretation
 

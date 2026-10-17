@@ -135,19 +135,19 @@ outputs, final archives, and a validation/handoff report outside the source tree
 **Interfaces:** Commands from Tasks 1-3; `git bundle create FILE --all`;
 repository tar archive including `.git`.
 
-- [ ] Document patch decisions, dependencies, local/CI commands, package identity,
+- [x] Document patch decisions, dependencies, local/CI commands, package identity,
   fresh-container installation, pending Android smoke tests, and bundle restore.
-- [ ] Obtain the declared toolchains and attempt the real cross-builds one target
+- [x] Obtain the declared toolchains and attempt the real cross-builds one target
   at a time within available disk/memory. Retain stage logs and record exact
   failures if the environment prevents completion; never hand off a fixture WCP.
-- [ ] Run `python3 tests/run.py --continue`, obtaining Cargo if possible. Report
+- [x] Run `python3 tests/run.py --continue`, obtaining Cargo if possible. Report
   each failure and skipped deployment/device suite by name. Validate actual
   package contents/checksums separately for every compiled architecture.
-- [ ] Review the full diff against the spec and fix concrete defects. Run fresh
+- [x] Review the full diff against the spec and fix concrete defects. Run fresh
   checks after fixes. Device tests remain explicitly pending without a device.
-- [ ] Commit documentation and actual validation results. Verify a clean tree,
+- [x] Commit documentation and actual validation results. Verify a clean tree,
   `git diff --check`, and `git fsck --full`.
-- [ ] Create the source tar archive including `.git` and a full-history bundle.
+- [x] Create the source tar archive including `.git` and a full-history bundle.
   Clone the bundle into a new directory, verify the feature branch tip/history
   and tree, and hash all handoff files. Provide direct download links and concise
   instructions for reviewing the diff and opening the user's own upstream PR.
@@ -159,5 +159,19 @@ packaging share source identities and build state, so a single implementer can
 validate their interfaces without repeated context handoffs. The current checkout
 is a dedicated clean checkout on `build/gamenative-wcp`.
 
-Status: approved by the user; native execution selected. Tasks 1–3 complete;
-real build verification and history export are in progress.
+Status: approved by the user; native execution completed. All four tasks complete.
+Both architectures compiled and passed package validation. ARM64EC needed a
+recorded incremental preloader relink; x86_64 compiled the finalized recipe
+without that adjustment. Both delivered WCPs use the reviewed packager.
+
+The full suite passed 24 Rust and 52 Python tests. Desktop deployment structure,
+desktop patch verification, desktop game launch, and provisioned QEMU checks
+skipped because their installations were absent. Android runtime tests remain
+pending. One whole-branch review found three Important archive-validation gaps;
+all were reproduced and fixed in one TDD pass. No findings were deferred.
+
+The external handoff includes VALIDATION.md, per-architecture build metadata and
+Wine diffs, package-verification.json, build/test logs, and PR_DESCRIPTION.md.
+The source tar includes .git; the complete bundle was cloned and compared by
+commit set, tip, and tree, and the extracted source archive passed Git integrity
+and clean-checkout checks. No remote push, PR, or release was created.
