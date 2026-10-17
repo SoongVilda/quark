@@ -79,6 +79,7 @@ def adapt_script(original: str, android_patches=False, host_tools=False) -> str:
         if adapted.count("../configure ") != 1:
             raise ValueError("Unrecognized native host-tools configure command")
         adapted = adapted.replace("../configure ", "../configure --enable-win64 ")
+        adapted = adapted.replace("\nmake ", " --without-freetype\nmake ", 1)
     if android_patches:
         needle = "        git apply ./android/patches/$patch"
         if adapted.count(needle) != 1:

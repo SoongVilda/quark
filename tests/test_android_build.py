@@ -97,6 +97,7 @@ class BuildTests(unittest.TestCase):
         except TypeError:
             self.fail("Host tools adapter must select the native 64-bit configuration")
         self.assertIn("../configure --enable-win64 --without-x", adapted)
+        self.assertIn("--without-freetype", adapted)
         self.assertIn("__tooldeps__ nls/all", adapted)
 
     def test_download_hash_mismatch_never_reuses_cache_file(self):
