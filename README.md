@@ -1,5 +1,9 @@
 # quark
 
+Experimental Android packaging support is documented in
+[`android/README.md`](android/README.md). It builds Quark-patched GameNative Wine
+WCPs; it does not run the desktop Quark launcher on Android.
+
 ATTENTION: Still-in-development software, published for testing. Two games
 reach their menus through it as of 2026-10-17; the rest of the list below
 has not been run yet.
