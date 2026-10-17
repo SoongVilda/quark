@@ -185,6 +185,7 @@ def build(arch: str, work: Path, output_dir: Path, cache: Path, jobs: int) -> Pa
     config = load_sources(REPO_ROOT / "android/sources.json")
     if run_git(REPO_ROOT, "status", "--porcelain", "--untracked-files=normal").strip():
         raise ValueError("Commit Quark changes before building so the package has an exact source revision")
+    quark_revision = run_git(REPO_ROOT, "rev-parse", "HEAD").strip()
     if jobs < 1 or jobs > 64:
         raise ValueError("Choose 1–64 build jobs")
     work = claim_workspace(work, arch)
@@ -250,7 +251,7 @@ def build(arch: str, work: Path, output_dir: Path, cache: Path, jobs: int) -> Pa
     patch_results = [line.split("\t")[1:] for line in (logs / "configure.log").read_text().splitlines()
                      if line.startswith("QUARK_ANDROID_PATCH\t")]
     metadata = {**preparation, "architecture": arch, "compilation_status": "compiled", "version_name": config["version_name"],
-                "quark_revision": run_git(REPO_ROOT, "rev-parse", "HEAD").strip(), "source_inputs": config,
+                "quark_revision": quark_revision, "source_inputs": config,
                 "prefix_normalization": prefix_identity, "build_adapters": adapters, "android_patches": patch_results,
                 "toolchains": {"rust": _tool_version(["rustc", "--version"], rust_env),
                                "cargo": _tool_version(["cargo", "--version"], rust_env),

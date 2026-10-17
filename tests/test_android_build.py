@@ -9,6 +9,7 @@ import sys
 import tarfile
 import tempfile
 import unittest
+from unittest.mock import patch
 import io
 
 REPO = Path(__file__).resolve().parents[1]
@@ -104,6 +105,31 @@ class BuildTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "SHA-256"):
             self.module.download("https://example.invalid/unused", cached, "0" * 64)
         self.assertEqual(cached.read_bytes(), b"unexpected existing file")
+
+    def test_build_captures_quark_revision_before_downloading_inputs(self):
+        binaries = self.root / "bin"
+        binaries.mkdir()
+        for name in self.module.TOOLS:
+            path = binaries / name
+            path.write_text("#!/bin/sh\nprintf 'aarch64-linux-android\\nx86_64-linux-android\\n'\n")
+            path.chmod(0o755)
+        git_calls = []
+
+        def git_boundary(root, *args):
+            git_calls.append(args)
+            return "1" * 40 if args == ("rev-parse", "HEAD") else ""
+
+        def network_boundary(*args, **kwargs):
+            self.assertIn(("rev-parse", "HEAD"), git_calls,
+                          "Capture the source revision before a long build can outlive its branch tip")
+            raise OSError("intentional fixture stop")
+
+        with patch.dict(os.environ, {"PATH": str(binaries) + os.pathsep + os.environ["PATH"]}), \
+             patch.object(self.module, "run_git", side_effect=git_boundary), \
+             patch.object(self.module.urllib.request, "urlopen", side_effect=network_boundary):
+            with self.assertRaisesRegex(OSError, "intentional fixture stop"):
+                self.module.build("arm64ec", self.root / "work", self.root / "out",
+                                  self.root / "cache", 2)
 
     def test_tar_extraction_rejects_traversal_before_writing(self):
         archive = self.root / "unsafe.tar"
