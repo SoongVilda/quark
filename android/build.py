@@ -85,6 +85,7 @@ def adapt_script(original: str, android_patches=False, host_tools=False) -> str:
             raise ValueError("Unrecognized native host-tools configure command")
         adapted = adapted.replace("../configure ", "../configure --enable-win64 ")
     if android_patches:
+        adapted = adapted.replace("\n", '\nexport PKG_CONFIG_PATH=""\n', 1)
         needle = "        git apply ./android/patches/$patch"
         if adapted.count(needle) != 1:
             raise ValueError("Unrecognized upstream Android patch loop")

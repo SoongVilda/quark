@@ -90,6 +90,14 @@ class BuildTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "patch loop"):
             self.module.adapt_script("#!/bin/sh\ntrue\n", android_patches=True)
 
+    def test_android_adapter_clears_host_pkg_config_paths(self):
+        original = '#!/bin/bash\nprintf "%s" "${PKG_CONFIG_PATH-}"\nfor patch in "${PATCHES[@]}"; do\n        git apply ./android/patches/$patch\ndone\n'
+        script = self.root / "android-env.sh"
+        script.write_text(self.module.adapt_script(original, android_patches=True))
+        env = {**os.environ, "PKG_CONFIG_PATH": "/host/freetype/pkgconfig"}
+        result = subprocess.check_output(["bash", str(script)], env=env, text=True)
+        self.assertEqual(result, "", "Android pkg-config must not select native host libraries")
+
     def test_host_tools_use_native_64_bit_without_multilib(self):
         original = "#!/bin/sh\nmkdir wine-tools\ncd wine-tools\n../configure --without-x --without-vulkan\nmake -j$(nproc) __tooldeps__ nls/all\n"
         try:
