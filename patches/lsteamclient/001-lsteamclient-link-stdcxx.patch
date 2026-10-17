@@ -1,0 +1,18 @@
+Subject: lsteamclient: Link libstdc++ into the unix library
+
+Upstream Wine's makedep links unix libraries with $(CC), so the C++ unix
+side of lsteamclient leaves operator new/delete unresolved; Proton's Wine
+fork links them with $(CXX). Add -lstdc++ to UNIX_LIBS.
+
+diff --git a/lsteamclient/Makefile.in b/lsteamclient/Makefile.in
+index a3239f52..fe5996cb 100644
+--- a/lsteamclient/Makefile.in
++++ b/lsteamclient/Makefile.in
+@@ -3,6 +3,7 @@ UNIXLIB   = lsteamclient.so
+ IMPORTS   = user32 ws2_32
+ 
+ EXTRADEFS = -DSTEAM_API_EXPORTS -Dprivate=public -Dprotected=public
++UNIX_LIBS = -lstdc++
+ 
+ SOURCES = \
+ 	steam_input_manual.c \

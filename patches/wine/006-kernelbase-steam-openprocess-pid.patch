@@ -1,0 +1,23 @@
+Subject: kernelbase: Open the calling process for Steam's placeholder PID
+
+Steam's ActiveProcess PID in the registry is the placeholder 0xfffe
+until steam.exe writes its real PID, which only happens on launches that
+go through steam.exe. Games call OpenProcess on that PID to check that
+Steam is alive; open the calling process instead so the check succeeds.
+
+Port of Proton's kernelbase hack.
+
+diff --git a/dlls/kernelbase/process.c b/dlls/kernelbase/process.c
+index ae9a7d6..98c9dcf 100644
+--- a/dlls/kernelbase/process.c
++++ b/dlls/kernelbase/process.c
+@@ -1136,6 +1136,9 @@ HANDLE WINAPI DECLSPEC_HOTPATCH OpenProcess( DWORD access, BOOL inherit, DWORD i
+ 
+     InitializeObjectAttributes( &attr, NULL, inherit ? OBJ_INHERIT : 0, 0, NULL );
+ 
++    /* Steam ActiveProcess registry PID hack: games query 0xfffe to check if Steam is alive. */
++    if (id == 0xfffe) id = GetCurrentProcessId();
++
+     cid.UniqueProcess = ULongToHandle(id);
+     cid.UniqueThread  = 0;
+ 

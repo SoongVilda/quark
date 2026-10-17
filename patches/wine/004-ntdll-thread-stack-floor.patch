@@ -1,0 +1,28 @@
+Subject: ntdll: Floor small explicit stack reserves of 64-bit threads
+
+Mono BDWGC GC threads and Unity worker pools create threads with small
+fixed stack reserves that their recursive GC walks overflow. Raise a
+non-zero reserve below 8 MiB to 8 MiB for 64-bit threads only; WoW64
+threads keep the reserve they asked for.
+
+diff --git a/dlls/ntdll/unix/thread.c b/dlls/ntdll/unix/thread.c
+index 070effd..43d3519 100644
+--- a/dlls/ntdll/unix/thread.c
++++ b/dlls/ntdll/unix/thread.c
+@@ -1228,6 +1228,16 @@ NTSTATUS init_thread_stack( TEB *teb, ULONG_PTR limit, SIZE_T reserve_size, SIZE
+     }
+ #endif
+ 
++    /* QUARK: floor non-zero explicit stack reserves of 64-bit threads at
++     * 8 MiB. NtCreateThreadEx callers (Mono BDWGC GC threads, Unity worker
++     * pools) pass small fixed reserves (1 MiB, sometimes less), and their
++     * recursive GC walks overflow them. A zero reserve keeps the image's own
++     * SizeOfStackReserve (virtual_alloc_thread_stack). WoW64 threads return
++     * above with their 32-bit stack, so a 32-bit game's 2-4 GiB address
++     * space is never spent on the floor. */
++    if (reserve_size && reserve_size < 8 * 1024 * 1024)
++        reserve_size = 8 * 1024 * 1024;
++
+     /* native stack */
+     if ((status = virtual_alloc_thread_stack( &stack, 0, limit, reserve_size, commit_size, TRUE )))
+         return status;

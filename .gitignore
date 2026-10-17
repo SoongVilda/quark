@@ -1,0 +1,12 @@
+# Build artifacts
+target/
+
+# The binary a package lays beside install.py
+/quark
+
+# Runtime
+*.pyc
+__pycache__/
+
+# Editor / tooling
+.claude/

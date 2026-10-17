@@ -1,0 +1,24 @@
+[package]
+name = "quark"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "GPL-2.0-only"
+description = "quark: A Proton replacement launcher"
+
+[[bin]]
+name = "quark"
+path = "src/quark/main.rs"
+
+# Tests live in the repo's tests/ suite, never inline; each compiles the
+# source module it covers by path.
+[[test]]
+name = "pe_scanner"
+path = "../tests/rust/pe_scanner.rs"
+
+[[test]]
+name = "launcher"
+path = "../tests/rust/launcher.rs"
+
+[dependencies]
+libc = "0.2"

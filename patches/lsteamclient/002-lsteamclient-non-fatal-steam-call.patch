@@ -1,0 +1,43 @@
+Subject: lsteamclient: Make a failed Steam client call non-fatal
+
+The native steamclient.so can fault during init (its C++ exceptions reach
+Wine's signal handler as access violations). STEAMCLIENT_CALL asserted on
+every non-zero status and steamclient_call forced an access violation of
+its own, so the game died with it. Log and return the status instead:
+games that handle a failed SteamAPI_Init keep running, and games that
+require Steam exit on their own terms.
+
+Proton forces a real access violation here on purpose (CW-Bug 26611);
+this deviates from it.
+
+diff --git a/lsteamclient/steamclient_main.c b/lsteamclient/steamclient_main.c
+index 07c4120c..443565db 100644
+--- a/lsteamclient/steamclient_main.c
++++ b/lsteamclient/steamclient_main.c
+@@ -85,11 +85,9 @@ NTSTATUS steamclient_call( unsigned int code, void *args, const char *name )
+     NTSTATUS status = WINE_UNIX_CALL( code, args );
+ 
+     if (status == STATUS_ACCESS_VIOLATION)
+-    {
+-        ERR( "Access violation in %s.\n", name );
+-        *(volatile int *)0xbeef |= 0;
+-    }
+-    if (status) WARN( "%s failed, status %#x\n", name, (UINT)status );
++        ERR( "Access violation in %s (non-fatal).\n", name );
++    else if (status)
++        WARN( "%s failed, status %#x\n", name, (UINT)status );
+     return status;
+ }
+ 
+diff --git a/lsteamclient/unixlib.h b/lsteamclient/unixlib.h
+index b96e3e6f..94673e65 100644
+--- a/lsteamclient/unixlib.h
++++ b/lsteamclient/unixlib.h
+@@ -431,7 +431,6 @@ NTSTATUS steamclient_call( unsigned int code, void *args, const char *name );
+ #define STEAMCLIENT_CALL( code, args )                                     \
+     ({                                                                     \
+         NTSTATUS status = steamclient_call( unix_ ## code, args, #code );  \
+-        assert( !status );                                                 \
+         status;                                                            \
+     })
+ 

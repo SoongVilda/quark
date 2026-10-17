@@ -1,0 +1,116 @@
+Subject: kernelbase: Mark the EasyAntiCheat launcher process for ntdll
+
+Set PROTON_EAC_LAUNCHER_PROCESS=1 in the environment of a child whose
+version resource names it the "EasyAntiCheat Launcher", and remove the
+variable from every other child. ntdll loads the native EAC client
+library for the launcher (patch 003), which fetches the Linux anti-cheat
+module; a game the launcher starts must not inherit the flag, or it
+loads the native Windows module instead of the builtin bridge.
+
+Port of Proton's (proton-wine-11.0) detection, by ProductName rather than
+file name. Proton's EOS bootstrapper and BattlEye launcher branches are
+not carried.
+
+diff --git a/dlls/kernelbase/process.c b/dlls/kernelbase/process.c
+index ae9a7d6..757f5e3 100644
+--- a/dlls/kernelbase/process.c
++++ b/dlls/kernelbase/process.c
+@@ -19,6 +19,7 @@
+  */
+ 
+ #include <stdarg.h>
++#include <stdio.h>
+ #include <string.h>
+ 
+ #include "ntstatus.h"
+@@ -502,6 +503,37 @@ done:
+     return ret;
+ }
+ 
++/* The ProductName from an executable's version resource, or NULL. */
++static char *get_product_name( const WCHAR *app_name )
++{
++    WCHAR full_path[MAX_PATH];
++    char *product_name, *ret;
++    DWORD *translation;
++    char buf[100];
++    void *block;
++    UINT size;
++
++    if (!GetLongPathNameW( app_name, full_path, MAX_PATH )) lstrcpynW( full_path, app_name, MAX_PATH );
++    if (!GetFullPathNameW( full_path, MAX_PATH, full_path, NULL )) lstrcpynW( full_path, app_name, MAX_PATH );
++
++    if (!(size = GetFileVersionInfoSizeExW( 0, full_path, NULL ))) return NULL;
++    if (!(block = HeapAlloc( GetProcessHeap(), 0, size ))) return NULL;
++
++    ret = NULL;
++    if (GetFileVersionInfoExW( 0, full_path, 0, size, block ) &&
++        VerQueryValueA( block, "\\VarFileInfo\\Translation", (void **)&translation, &size ) && size == 4)
++    {
++        snprintf( buf, sizeof(buf), "\\StringFileInfo\\%08lx\\ProductName",
++                  MAKELONG( HIWORD(*translation), LOWORD(*translation) ) );
++        if (VerQueryValueA( block, buf, (void **)&product_name, &size ) &&
++            (ret = HeapAlloc( GetProcessHeap(), 0, strlen( product_name ) + 1 )))
++            strcpy( ret, product_name );
++    }
++    HeapFree( GetProcessHeap(), 0, block );
++    return ret;
++}
++
++
+ /**********************************************************************
+  *           CreateProcessInternalW   (kernelbase.@)
+  */
+@@ -521,6 +553,7 @@ BOOL WINAPI DECLSPEC_HOTPATCH CreateProcessInternalW( HANDLE token, const WCHAR
+     ULONG nt_flags = 0;
+     USHORT machine = 0;
+     NTSTATUS status;
++    char *product_name;
+ 
+     /* Process the AppName and/or CmdLine to get module name and path */
+ 
+@@ -568,6 +601,44 @@ BOOL WINAPI DECLSPEC_HOTPATCH CreateProcessInternalW( HANDLE token, const WCHAR
+         goto done;
+     }
+ 
++    /* QUARK: PROTON_EAC_LAUNCHER_PROCESS tells ntdll to load the native EAC
++     * client library, which the EasyAntiCheat launcher needs to fetch the
++     * Linux anti-cheat module. It is set for the launcher, found by its
++     * ProductName as Proton does, and removed from every other child, so a
++     * game the launcher starts never inherits it and uses the builtin bridge.
++     * It is set here rather than in ntdll, where the product name is harder
++     * to read, and not through WINEDLLOVERRIDES, which comes from the unix
++     * environment. */
++    {
++        UNICODE_STRING var, value;
++        WCHAR *new_env;
++
++        product_name = get_product_name( app_name );
++        if (!(new_env = RtlAllocateHeap( GetProcessHeap(), 0, params->EnvironmentSize )))
++        {
++            HeapFree( GetProcessHeap(), 0, product_name );
++            status = STATUS_NO_MEMORY;
++            goto done;
++        }
++        memcpy( new_env, params->Environment, params->EnvironmentSize );
++        RtlDestroyProcessParameters( params );
++
++        RtlInitUnicodeString( &var, L"PROTON_EAC_LAUNCHER_PROCESS" );
++        RtlInitUnicodeString( &value, L"1" );
++        RtlSetEnvironmentVariable( &new_env, &var,
++                                   product_name && !strcmp( product_name, "EasyAntiCheat Launcher" ) ? &value : NULL );
++        HeapFree( GetProcessHeap(), 0, product_name );
++
++        params = create_process_params( app_name, tidy_cmdline, cur_dir, new_env,
++                                        flags | CREATE_UNICODE_ENVIRONMENT, startup_info );
++        RtlFreeHeap( GetProcessHeap(), 0, new_env );
++        if (!params)
++        {
++            status = STATUS_NO_MEMORY;
++            goto done;
++        }
++    }
++
+     if (flags & (DEBUG_PROCESS | DEBUG_ONLY_THIS_PROCESS))
+     {
+         if ((status = DbgUiConnectToDbg())) goto done;
