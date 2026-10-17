@@ -1,6 +1,6 @@
 # Experimental GameNative WCP build
 
-Status: proposed design, awaiting user review before implementation.
+Status: approved by the user on 2026-10-17; native implementation is in progress.
 
 ## Goal and interpretation
 
@@ -110,6 +110,6 @@ build metadata. Retain the applicable licenses and source/build information.
 
 ## Review boundary
 
-Approve this written design before implementation planning and code changes.
-The next artifact will be the implementation plan, followed by the build work.
-No generated WCP or implementation currently exists.
+The user approved this design and the implementation plan and selected native
+execution. Implementation refinements and actual verification results are recorded
+in the final validation report. Android device testing remains a separate step.

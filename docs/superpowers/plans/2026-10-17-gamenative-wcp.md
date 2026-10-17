@@ -1,6 +1,6 @@
 # GameNative WCP Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Build experimental Android Wine WCPs carrying applicable Quark patches,
 and deliver reviewable commits with a complete repository/history archive.
@@ -48,21 +48,21 @@ LLVM MinGW 20250920, Rust for ntsync-android, and GitHub Actions.
   verifies the checkout and applies the declared patches; returns patch identities.
 - CLI: `python3 android/prepare.py --source DIR` prepares an existing pinned tree.
 
-- [ ] Write tests using disposable real Git repositories: wrong revision and
+- [x] Write tests using disposable real Git repositories: wrong revision and
   dirty trees fail without changing files; a valid two-file patch applies once;
   a broken patch fails; the command works with spaces in checkout/patch paths.
-- [ ] Run `python3 -m unittest discover -s tests -p test_android_prepare.py -v`;
+- [x] Run `python3 -m unittest discover -s tests -p test_android_prepare.py -v`;
   verify failures reflect missing preparation behavior.
-- [ ] Pin Wine as above, ntsync-android at
+- [x] Pin Wine as above, ntsync-android at
   `7ce6435e5979b1cb5341aa4b299f31e8937fe121`, and prefix files at
   `6286ac456e4a8376e053ce1ce4f565bd37cc4af4`. Pin the Termux release
   `build-20260218` and its published SHA-256 digests for each architecture.
-- [ ] Implement preparation with argument-list subprocess calls, checked exits,
+- [x] Implement preparation with argument-list subprocess calls, checked exits,
   source revision checks, and `git apply --check` before application. Reject
   partial or repeated preparation clearly rather than silently skipping patches.
-- [ ] Rebase only lsteamclient 002 onto the pinned GameNative sources, preserving
+- [x] Rebase only lsteamclient 002 onto the pinned GameNative sources, preserving
   its CALLDIAG timing code. Keep the desktop patch unchanged.
-- [ ] Run tests; then apply both real selected patches to the complete pinned
+- [x] Run tests; then apply both real selected patches to the complete pinned
   source. Inspect the resulting diff and confirm the documented exclusions in
   the real source. Commit as `feat: prepare pinned GameNative Wine with Quark patches`.
 
@@ -79,21 +79,21 @@ LLVM MinGW 20250920, Rust for ntsync-android, and GitHub Actions.
 - CLI: `python3 android/package.py --tree DIR --prefix-pack FILE --arch ARCH
   --metadata FILE --output FILE.wcp`.
 
-- [ ] Write tests for a valid architecture-specific fixture, wrong ELF/PE
+- [x] Write tests for a valid architecture-specific fixture, wrong ELF/PE
   architecture, missing Wine files, missing executable permissions, empty or
   corrupt prefix archives, unsafe members, symlink escape, paths with spaces,
   output/source overlap, and compressor failure. Name fixture outputs as tests.
-- [ ] Run `python3 -m unittest discover -s tests -p test_android_package.py -v`
+- [x] Run `python3 -m unittest discover -s tests -p test_android_package.py -v`
   and observe the missing behavior fail.
-- [ ] Implement required Wine loader/server/ntdll/Steam bridge checks and matching
+- [x] Implement required Wine loader/server/ntdll/Steam bridge checks and matching
   prefix validation using the actual pinned prefix archive layout. Check relevant
   ELF and PE headers and ELF segment alignment. Reject unsafe links/members.
-- [ ] Generate a root-level GameNative Proton `profile.json`, `prefixPack.txz`,
+- [x] Generate a root-level GameNative Proton `profile.json`, `prefixPack.txz`,
   `bin`, `lib`, `share`, licenses, and build manifest. Use a distinct experimental
   version, relative Wine paths, deterministic tar metadata, and SHA-256 identities.
-- [ ] Write into a temporary output and rename only after compression succeeds;
+- [x] Write into a temporary output and rename only after compression succeeds;
   ensure failed builds cannot masquerade as final packages.
-- [ ] Run the tests and inspect archive members/profile by decompression.
+- [x] Run the tests and inspect archive members/profile by decompression.
   Commit as `feat: validate and package experimental GameNative WCPs`.
 
 ### Task 3: Build driver and manual CI workflow
@@ -107,23 +107,23 @@ and `tests/test_android_build.py`; modify `tests/run.py` and `.gitignore`.
 - Build metadata records Quark/Wine/dependency revisions, patch hashes, resolved
   toolchain identities, architecture, prefix hash, and compilation status.
 
-- [ ] Write tests for prerequisite errors, safe workspace selection, checked
+- [x] Write tests for prerequisite errors, safe workspace selection, checked
   subprocess failure, and the build-stage ordering. Use a fake executable only
   at the external tool boundary; test filesystem effects with real temp paths.
-- [ ] Run `python3 -m unittest discover -s tests -p test_android_build.py -v`
+- [x] Run `python3 -m unittest discover -s tests -p test_android_build.py -v`
   and observe the intended failures.
-- [ ] Implement a dedicated, ownership-marked build workspace. Keep GameNative's
+- [x] Implement a dedicated, ownership-marked build workspace. Keep GameNative's
   scripts scoped to that workspace, including their fixed `$HOME`-relative output
   paths; preserve the user's actual home. Reuse the existing toolchain setup
   rather than copying architecture build logic.
-- [ ] Use checked Bash execution for autogen, host Wine tools, ARM64 sysvshm,
+- [x] Use checked Bash execution for autogen, host Wine tools, ARM64 sysvshm,
   ntsync, configure/Android patch application, compile, and install. Audit the
   upstream scripts' patch loops before choosing fail-fast handling. Require the
   expected outputs rather than treating printed warnings as successful stages.
-- [ ] Add a manual two-architecture CI matrix with necessary toolchains, pinned
+- [x] Add a manual two-architecture CI matrix with necessary toolchains, pinned
   inputs, caches, bounded jobs/timeouts, and artifact uploads. Do not publish a
   release or write to external repositories.
-- [ ] Add an `android` test layer and ignore only generated Android build outputs.
+- [x] Add an `android` test layer and ignore only generated Android build outputs.
   Run focused tests and validate workflow/shell syntax. Commit as
   `ci: build experimental GameNative WCP artifacts`.
 
@@ -159,4 +159,5 @@ packaging share source identities and build state, so a single implementer can
 validate their interfaces without repeated context handoffs. The current checkout
 is a dedicated clean checkout on `build/gamenative-wcp`.
 
-Status: written and self-reviewed; awaiting user plan review and execution choice.
+Status: approved by the user; native execution selected. Tasks 1–3 complete;
+real build verification and history export are in progress.
