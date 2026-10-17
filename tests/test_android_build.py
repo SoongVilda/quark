@@ -97,8 +97,19 @@ class BuildTests(unittest.TestCase):
         except TypeError:
             self.fail("Host tools adapter must select the native 64-bit configuration")
         self.assertIn("../configure --enable-win64 --without-x", adapted)
-        self.assertIn("--without-freetype", adapted)
+        self.assertNotIn("--without-freetype", adapted,
+                         "The native sfnt2fon generator needs FreeType for cross-built fonts")
         self.assertIn("__tooldeps__ nls/all", adapted)
+
+    def test_prerequisites_reject_missing_native_freetype_before_downloads(self):
+        binaries = self.root / "tools"
+        binaries.mkdir()
+        for name in self.module.TOOLS:
+            path = binaries / name
+            path.write_text("#!/bin/sh\nexit " + ("1" if name == "pkg-config" else "0") + "\n")
+            path.chmod(0o755)
+        with self.assertRaisesRegex(ValueError, "FreeType"):
+            self.module.check_prerequisites(str(binaries))
 
     def test_download_hash_mismatch_never_reuses_cache_file(self):
         cached = self.root / "asset.tar"

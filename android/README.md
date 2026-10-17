@@ -76,8 +76,9 @@ Wine/ntsync commits, prepares the source, and calls the pinned GameNative build
 scripts. It relocates their build paths into the owned workspace and limits make
 jobs; it does not change your actual `HOME`. The scripts' architecture/compiler
 options remain GameNative's for Android. The native host-tools configure adds
-`--enable-win64 --without-freetype`: this stage builds only helper tools and NLS
-data, so it needs neither 32-bit development libraries nor host font libraries.
+`--enable-win64`, avoiding a host multilib requirement. Native FreeType development
+files remain required for the `sfnt2fon` font generator; this is checked before
+downloads begin.
 
 An existing workspace must have this build's ownership marker and architecture.
 A partially built workspace is kept for diagnosis; use a **new empty work

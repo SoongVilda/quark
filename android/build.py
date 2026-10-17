@@ -23,6 +23,11 @@ def check_prerequisites(search_path=None) -> None:
     missing = [tool for tool in TOOLS if shutil.which(tool, path=search_path) is None]
     if missing:
         raise ValueError("Missing build tools: " + ", ".join(missing))
+    pkg_config = shutil.which("pkg-config", path=search_path)
+    result = subprocess.run([pkg_config, "--exists", "freetype2"],
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if result.returncode:
+        raise ValueError("Native FreeType development files are required for the sfnt2fon host generator (pkg-config freetype2)")
 
 
 def claim_workspace(work: Path, arch: str) -> Path:
@@ -79,7 +84,6 @@ def adapt_script(original: str, android_patches=False, host_tools=False) -> str:
         if adapted.count("../configure ") != 1:
             raise ValueError("Unrecognized native host-tools configure command")
         adapted = adapted.replace("../configure ", "../configure --enable-win64 ")
-        adapted = adapted.replace("\nmake ", " --without-freetype\nmake ", 1)
     if android_patches:
         needle = "        git apply ./android/patches/$patch"
         if adapted.count(needle) != 1:
