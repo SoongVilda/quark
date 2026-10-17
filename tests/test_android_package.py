@@ -174,6 +174,29 @@ class PackageTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "architecture"):
             self.validate()
 
+    def test_native_arm_directory_accepts_its_hybrid_emulation_module(self):
+        import shutil
+        shutil.rmtree(self.tree)
+        self.make_tree("arm64ec")
+        module = self.windows_dir / "xtajit64.dll"
+        module.write_bytes(hybrid_pe())
+        try:
+            self.validate()
+        except ValueError as exc:
+            self.fail(f"ARM64EC emulation module belongs in the native directory: {exc}")
+        module.write_bytes(pe(0x8664))
+        with self.assertRaisesRegex(ValueError, "architecture"):
+            self.validate()
+
+    def test_winmd_metadata_keeps_its_architecture_neutral_i386_header(self):
+        metadata = self.tree / "share/wine/winmd/Windows.Foundation.winmd"
+        metadata.parent.mkdir(parents=True)
+        metadata.write_bytes(pe(0x14c))
+        try:
+            self.validate()
+        except ValueError as exc:
+            self.fail(f"WinMD metadata is not a native x64 module: {exc}")
+
     def test_rejects_small_elf_page_alignment(self):
         p = self.unix_dir / "ntdll.so"
         data = bytearray(p.read_bytes())

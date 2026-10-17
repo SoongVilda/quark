@@ -238,7 +238,12 @@ def validate_tree(tree: Path, prefix_pack: Path, arch: str) -> dict:
                         identities[relative] = {"sha256": sha256_file(path)}
                         continue
                     expected = next((v for k, v in pe_arches.items() if k in path.parts), target["pe"])
-                    if machine != expected:
+                    allowed = {expected}
+                    if arch == "arm64ec" and "aarch64-windows" in path.parts:
+                        allowed.add(0xa641)  # Native directory also contains ARM64EC xtajit64.
+                    if relative.startswith("share/wine/winmd/") and path.suffix == ".winmd":
+                        allowed = {0x14c}  # Architecture-neutral Windows Runtime metadata.
+                    if machine not in allowed:
                         raise ValueError(f"Wrong PE architecture: {relative}")
             identities[relative] = {"sha256": sha256_file(path)}
         elif not path.is_dir():
