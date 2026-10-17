@@ -1,0 +1,72 @@
+name: Build experimental GameNative WCPs
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  android-wine:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [arm64ec, x86_64]
+    steps:
+      - name: Check out Quark
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install host build prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential git autoconf automake libtool \
+            bison flex m4 pkg-config gettext ccache unzip zstd python3 \
+            libfreetype6-dev libpng-dev zlib1g-dev
+
+      - name: Install pinned Rust and Android targets
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.90.0
+          targets: aarch64-linux-android,x86_64-linux-android
+
+      - name: Test Android build support
+        run: python3 tests/run.py --layer android --layer gate
+
+      - name: Cache verified toolchain downloads and extraction
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/quark-android-cache
+          key: quark-android-${{ runner.os }}-${{ matrix.arch }}-${{ hashFiles('android/sources.json') }}
+
+      - name: Build patched Wine and package WCP
+        run: |
+          python3 android/build.py \
+            --arch '${{ matrix.arch }}' \
+            --work-dir '${{ runner.temp }}/quark-android-work' \
+            --cache-dir '${{ runner.temp }}/quark-android-cache' \
+            --output-dir '${{ runner.temp }}/quark-android-output' \
+            --jobs 2
+
+      - name: Upload WCP, checksum, and source manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: quark-patched-gamenative-${{ matrix.arch }}
+          path: |
+            ${{ runner.temp }}/quark-android-output/*.wcp
+            ${{ runner.temp }}/quark-android-output/*.sha256
+            ${{ runner.temp }}/quark-android-output/*.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gamenative-build-logs-${{ matrix.arch }}
+          path: ${{ runner.temp }}/quark-android-work/logs/
+          if-no-files-found: warn
+          retention-days: 14

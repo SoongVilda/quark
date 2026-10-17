@@ -36,6 +36,10 @@ LAYERS = {
     "unit": [
         ("cargo test", ["cargo", "test", "--release"]),
     ],
+    "android": [
+        ("Android build and packaging", [PY, "-m", "unittest", "discover", "-s", str(TESTS),
+                                         "-p", "test_android_*.py", "-v"]),
+    ],
     "gate": [
         ("steam safety", [PY, str(TESTS / "test_iterate_steam_safety.py")]),
     ],

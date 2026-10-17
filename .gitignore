@@ -8,5 +8,8 @@ target/
 *.pyc
 __pycache__/
 
+# Optional manual Android package output (build workspaces stay outside the repo)
+/android/out/
+
 # Editor / tooling
 .claude/
