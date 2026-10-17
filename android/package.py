@@ -3,9 +3,9 @@
 import argparse
 import hashlib
 import json
+import lzma
 import os
 from pathlib import Path, PurePosixPath
-import posixpath
 import re
 import struct
 import subprocess
@@ -115,24 +115,27 @@ def check_elf(path: Path, machine: int, executable: bool = False) -> None:
 
 def validate_prefix(path: Path, expected_machine: int) -> str:
     native = False
-    names, links = set(), []
+    members = {}
     try:
+        # Tar iteration stops at the tar end marker, before the XZ footer. Read
+        # through compressed EOF as well so a truncated stream cannot pass.
+        with lzma.open(path, "rb") as compressed:
+            while compressed.read(1024 * 1024):
+                pass
         with tarfile.open(path, "r:xz") as archive:
             for member in archive:
                 name = PurePosixPath(member.name)
                 if name.is_absolute() or ".." in name.parts or not name.parts or name.parts[0] != ".wine":
                     raise ValueError(f"Unsafe prefix member: {member.name}")
                 canonical = str(name)
-                if canonical in names:
+                if canonical in members:
                     raise ValueError(f"Duplicate prefix member: {member.name}")
-                names.add(canonical)
+                members[canonical] = member
                 if member.issym():
                     if canonical == ".wine/dosdevices/z:" and member.linkname == "/":
                         continue  # Standard GameNative/Wine drive mapping.
-                    target = posixpath.normpath(str(name.parent / member.linkname))
-                    if member.linkname.startswith("/") or not target.startswith(".wine/"):
+                    if member.linkname.startswith("/") or not member.linkname:
                         raise ValueError(f"Unsafe prefix symlink: {member.name}")
-                    links.append(target)
                 elif not (member.isdir() or member.isfile()):
                     raise ValueError(f"Unsupported prefix member: {member.name}")
                 if member.isfile() and member.name.endswith((".dll", ".exe", ".drv")):
@@ -143,11 +146,45 @@ def validate_prefix(path: Path, expected_machine: int) -> str:
                     if machine not in (0x14c, expected_machine):
                         raise ValueError(f"Wrong prefix architecture: {member.name}")
                     native |= machine == expected_machine
-            if not native or not {".wine/system.reg", ".wine/user.reg"}.issubset(names):
+            if not native or not {".wine/system.reg", ".wine/user.reg"}.issubset(members):
                 raise ValueError("Incomplete prefix pack: registry and native PE files are required")
-            if any(target not in names for target in links):
-                raise ValueError("Broken prefix symlink")
-    except (tarfile.TarError, EOFError, OSError) as exc:
+        directories = {str(parent) for name in members for parent in PurePosixPath(name).parents
+                       if str(parent) != "."}
+        directories.update(name for name, member in members.items() if member.isdir())
+        # Never extract payload through an archive symlink, even a safe alias.
+        for name in members:
+            for parent in PurePosixPath(name).parents:
+                entry = members.get(str(parent))
+                if entry is not None and not entry.isdir():
+                    raise ValueError(f"Non-directory prefix ancestor: {name}")
+
+        def resolve(parts, active=frozenset()):
+            current = []
+            for part in parts:
+                if part in ("", "."):
+                    continue
+                if current and "/".join(current) not in directories:
+                    raise ValueError("Non-directory prefix symlink target")
+                if part == "..":
+                    if len(current) <= 1:
+                        raise ValueError("Escaping prefix symlink")
+                    current.pop()
+                    continue
+                current.append(part)
+                name = "/".join(current)
+                entry = members.get(name)
+                if entry is not None and entry.issym():
+                    if name in active or name == ".wine/dosdevices/z:":
+                        raise ValueError("Cyclic or root-traversing prefix symlink")
+                    current = resolve([*current[:-1], *PurePosixPath(entry.linkname).parts], active | {name})
+                elif name not in members and name not in directories:
+                    raise ValueError(f"Broken prefix symlink: {name}")
+            return current
+
+        for name, member in members.items():
+            if member.issym() and not (name == ".wine/dosdevices/z:" and member.linkname == "/"):
+                resolve(PurePosixPath(name).parts)
+    except (tarfile.TarError, lzma.LZMAError, EOFError, OSError, RecursionError) as exc:
         raise ValueError(f"Invalid prefix pack: {exc}") from exc
     return sha256_file(path)
 
@@ -215,7 +252,12 @@ def validate_tree(tree: Path, prefix_pack: Path, arch: str) -> dict:
     identities = {}
     pe_arches = {"i386-windows": 0x14c, "x86_64-windows": 0x8664,
                  "aarch64-windows": 0xaa64, "arm64ec-windows": 0xa641}
-    for path in sorted(tree.rglob("*")):
+    roots = [tree / name for name in ("bin", "lib", "share")]
+    if any(root.is_symlink() or not root.is_dir() for root in roots):
+        raise ValueError("Packaged Wine roots must be real bin/lib/share directories")
+    paths = sorted(path for root in roots for path in [root, *root.rglob("*")])
+    emitted = set(paths)
+    for path in paths:
         relative = path.relative_to(tree).as_posix()
         if path.is_symlink():
             try:
@@ -225,6 +267,12 @@ def validate_tree(tree: Path, prefix_pack: Path, arch: str) -> dict:
             link = os.readlink(path)
             if Path(link).is_absolute() or not resolved.is_relative_to(tree):
                 raise ValueError(f"Escaping Wine symlink: {relative}")
+            # Every hop must exist in the archive, not just in the source tree.
+            current = path.parent
+            for part in Path(link).parts:
+                current = (current / part).resolve(strict=True)
+                if current != tree and current not in emitted:
+                    raise ValueError(f"Unpackaged Wine symlink target: {relative}")
             identities[relative] = {"symlink": link}
         elif path.is_file():
             with path.open("rb") as source:

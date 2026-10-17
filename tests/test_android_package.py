@@ -346,6 +346,55 @@ class PackageTests(unittest.TestCase):
                     self.validate()
                 link.unlink()
 
+    def test_rejects_prefix_symlink_cycles_and_indirect_root_traversal(self):
+        def link(name, target):
+            member = tarfile.TarInfo(name)
+            member.type, member.linkname = tarfile.SYMTYPE, target
+            return member
+        child = tarfile.TarInfo(".wine/dosdevices/z:/tmp/escaped-by-prefix")
+        cases = [[link(".wine/a", "b"), link(".wine/b", "a")],
+                 [link(".wine/escape", "dosdevices/z:")], [child],
+                 [link(".wine/a", "drive_c"), tarfile.TarInfo(".wine/a/payload")],
+                 [link(".wine/a", "drive_c"), link(".wine/escape", "a/../../../etc")]]
+        for index, extra in enumerate(cases):
+            with self.subTest(names=[m.name for m in extra]):
+                prefix(self.pack, 0x8664, extra)
+                output = self.root / f"unsafe-prefix-{index}.wcp"
+                with self.assertRaisesRegex(ValueError, "prefix"):
+                    self.package(output)
+                self.assertFalse(output.exists())
+
+    def test_accepts_safe_prefix_symlink_chains_and_c_drive(self):
+        links = []
+        for name, target in [(".wine/dosdevices/c:", "../drive_c"),
+                             (".wine/alias", "dosdevices/c:"),
+                             (".wine/native", "alias/windows/system32/example.dll")]:
+            member = tarfile.TarInfo(name)
+            member.type, member.linkname = tarfile.SYMTYPE, target
+            links.append(member)
+        prefix(self.pack, 0x8664, links)
+        self.validate()
+
+    def test_rejects_truncated_prefix_xz_stream_before_publication(self):
+        original = self.pack.read_bytes()
+        for removed in [1, 12, 24, 48, len(original) // 2]:
+            with self.subTest(removed=removed):
+                self.pack.write_bytes(original[:-removed])
+                output = self.root / f"truncated-{removed}.wcp"
+                with self.assertRaisesRegex(ValueError, "prefix"):
+                    self.package(output)
+                self.assertFalse(output.exists())
+
+    def test_rejects_links_to_targets_omitted_from_wcp(self):
+        omitted = self.tree / "omitted"
+        omitted.mkdir()
+        (omitted / "target").write_text("not packaged")
+        link = self.tree / "bin/extra-link"
+        link.symlink_to("../omitted/target")
+        with self.assertRaisesRegex(ValueError, "symlink"):
+            self.package()
+        self.assertFalse(self.output.exists())
+
     def test_rejects_output_overlap_and_metadata_mismatch(self):
         with self.assertRaisesRegex(ValueError, "output"):
             self.package(self.tree / "inside.wcp")

@@ -1,0 +1,2 @@
+# Unified-diff context lines preserve upstream whitespace, including blank lines.
+patches/gamenative/*.patch whitespace=-blank-at-eol,-blank-at-eof
