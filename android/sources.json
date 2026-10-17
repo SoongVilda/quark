@@ -63,5 +63,6 @@
       "path": "patches/gamenative/003-android-preloader-16k-alignment.patch",
       "sha256": "e03bb5de70246d43515426e08d1546de6c04b57d295eed41a22c0ff09f8c5137"
     }
-  ]
+  ],
+  "profile_version_name": "11.0-2.901"
 }

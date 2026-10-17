@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import posixpath
+import re
 import struct
 import subprocess
 import tarfile
@@ -265,13 +266,16 @@ def package_wcp(tree: Path, prefix_pack: Path, arch: str, output: Path, metadata
         raise ValueError("Invalid output path; choose a .wcp outside the input tree")
     if output.exists() or Path(str(output) + ".sha256").exists():
         raise ValueError("The output or its checksum already exists; choose a new output path")
-    required = {"architecture", "compilation_status", "version_name", "quark_revision",
+    required = {"architecture", "compilation_status", "version_name", "profile_version_name", "quark_revision",
                 "wine_revision", "patches", "toolchains"}
     if not required.issubset(metadata) or metadata["architecture"] != arch or metadata["compilation_status"] != "compiled":
         raise ValueError("Invalid build metadata: matching completed compilation is required")
+    profile_version = metadata["profile_version_name"]
+    if not isinstance(profile_version, str) or not re.fullmatch(r"\d+(?:\.\d+)*(?:-\d+(?:\.\d+)*)?", profile_version):
+        raise ValueError("GameNative requires a numeric profile version; keep branding in the filename and description")
     validation = validate_tree(tree, prefix_pack, arch)
     manifest = {**metadata, "package": validation}
-    profile = {"type": "Proton", "versionName": f"{metadata['version_name']}-{arch}", "versionCode": 1,
+    profile = {"type": "Proton", "versionName": f"{profile_version}-{arch}", "versionCode": 1,
                "description": f"Experimental Quark-patched GameNative Wine ({arch}); Android SDK 28, 16 KiB pages. Use a fresh matching container. Does not run the Quark launcher.",
                "files": [], "wine": {"binPath": "bin", "libPath": "lib", "prefixPack": "prefixPack.txz"}}
     output.parent.mkdir(parents=True, exist_ok=True)

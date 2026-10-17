@@ -4,6 +4,7 @@ import hashlib
 import importlib.util
 import io
 import json
+import re
 from pathlib import Path
 import struct
 import subprocess
@@ -84,7 +85,8 @@ class PackageTests(unittest.TestCase):
         self.output = self.root / "test-fixture.wcp"
         self.make_tree("x86_64")
         self.metadata = {"architecture": "x86_64", "compilation_status": "compiled",
-                         "version_name": "quark-patched-test-fixture", "quark_revision": "1" * 40,
+                         "version_name": "quark-patched-test-fixture", "profile_version_name": "11.0-2.901",
+                         "quark_revision": "1" * 40,
                          "wine_revision": "2" * 40, "patches": [{"path": "test.patch", "sha256": "3" * 64}],
                          "toolchains": {"test": "fixture-only"}}
 
@@ -138,7 +140,13 @@ class PackageTests(unittest.TestCase):
             self.assertIn("licenses/Quark-LICENSE", names)
             profile = json.load(archive.extractfile("profile.json"))
             self.assertEqual(profile["type"], "Proton")
-            self.assertIn("quark-patched", profile["versionName"])
+            # Consumer contract from GameNative's WineInfo.fromIdentifier:
+            # branded names miss this pattern and fall back to bundled Wine.
+            consumer = re.compile(r"^(wine|proton|Proton)\-([0-9\.]+)(?:\-([0-9\.]+))?\-(x86|x86_64|arm64ec)(?:\-([0-9]+))?$")
+            parsed = consumer.fullmatch("proton-" + profile["versionName"])
+            self.assertIsNotNone(parsed, "GameNative must select this package instead of falling back")
+            self.assertEqual((parsed.group(2), parsed.group(4)), ("11.0", "x86_64"))
+            self.assertEqual(profile["versionName"], "11.0-2.901-x86_64")
             self.assertEqual(profile["wine"], {"binPath": "bin", "libPath": "lib", "prefixPack": "prefixPack.txz"})
             manifest = json.load(archive.extractfile("build-manifest.json"))
             self.assertEqual(manifest["wine_revision"], self.metadata["wine_revision"])
@@ -343,6 +351,12 @@ class PackageTests(unittest.TestCase):
             self.package(self.tree / "inside.wcp")
         self.metadata["architecture"] = "arm64ec"
         with self.assertRaisesRegex(ValueError, "metadata"):
+            self.package()
+        self.assertFalse(self.output.exists())
+
+    def test_rejects_profile_names_gamenative_cannot_parse(self):
+        self.metadata["profile_version_name"] = "quark-patched-0.1.0"
+        with self.assertRaisesRegex(ValueError, "profile|GameNative"):
             self.package()
         self.assertFalse(self.output.exists())
 

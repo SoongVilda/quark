@@ -8,6 +8,11 @@ The package name starts with `quark-patched-0.1.0-proton-11.0-2` and ends with
 `arm64ec` or `x86_64`. These are experimental builds; successful compilation and
 archive validation do not establish game compatibility or performance gains.
 
+Inside GameNative the numeric profile version is **11.0-2.901**, with the Quark
+name in its description. GameNative's identifier parser requires numeric version
+fields; a branded `versionName` would silently select the bundled Wine instead.
+The filenames and build manifest retain the full Quark identity.
+
 ## What is included
 
 | Change | Decision |

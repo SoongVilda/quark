@@ -257,6 +257,7 @@ def build(arch: str, work: Path, output_dir: Path, cache: Path, jobs: int) -> Pa
     patch_results = [line.split("\t")[1:] for line in (logs / "configure.log").read_text().splitlines()
                      if line.startswith("QUARK_ANDROID_PATCH\t")]
     metadata = {**preparation, "architecture": arch, "compilation_status": "compiled", "version_name": config["version_name"],
+                "profile_version_name": config["profile_version_name"],
                 "quark_revision": quark_revision, "source_inputs": config,
                 "prefix_normalization": prefix_identity, "build_adapters": adapters, "android_patches": patch_results,
                 "toolchains": {"rust": _tool_version(["rustc", "--version"], rust_env),
