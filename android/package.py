@@ -39,7 +39,43 @@ def pe_machine(source, size: int, allow_ne: bool = False):
         return None  # Old Wine templates retain inert 16-bit Windows resources.
     if len(signature) != 6 or signature[:4] != b"PE\0\0":
         raise ValueError("Invalid PE signature")
-    return struct.unpack_from("<H", signature, 4)[0]
+    machine = struct.unpack_from("<H", signature, 4)[0]
+    if machine != 0x8664:
+        return machine
+    # Linked ARM64EC images use IMAGE_FILE_MACHINE_AMD64, unlike their object
+    # files. The PE32+ load config's CHPEMetadataPointer distinguishes them.
+    source.seek(offset + 4)
+    coff = source.read(20)
+    if len(coff) != 20:
+        raise ValueError("Truncated PE COFF header")
+    sections = struct.unpack_from("<H", coff, 2)[0]
+    optional_size = struct.unpack_from("<H", coff, 16)[0]
+    if optional_size < 200:
+        return machine
+    optional = source.read(optional_size)
+    if len(optional) != optional_size:
+        raise ValueError("Truncated PE optional header")
+    if struct.unpack_from("<H", optional)[0] != 0x20b or struct.unpack_from("<I", optional, 108)[0] <= 10:
+        return machine
+    load_rva, load_size = struct.unpack_from("<II", optional, 112 + 10 * 8)
+    if not load_rva or load_size < 208:
+        return machine
+    section_offset = offset + 24 + optional_size
+    if sections > 96 or section_offset + sections * 40 > size:
+        raise ValueError("Invalid PE section table")
+    for index in range(sections):
+        source.seek(section_offset + index * 40)
+        section = source.read(40)
+        virtual_size, virtual_address, raw_size, raw_offset = struct.unpack_from("<IIII", section, 8)
+        delta = load_rva - virtual_address
+        if 0 <= delta < max(virtual_size, raw_size):
+            if delta + 208 > raw_size or raw_offset + delta + 208 > size:
+                raise ValueError("Truncated PE load configuration")
+            source.seek(raw_offset + delta + 200)
+            if struct.unpack("<Q", source.read(8))[0]:
+                return 0xa641
+            break
+    return machine
 
 
 def check_elf(path: Path, machine: int, executable: bool = False) -> None:

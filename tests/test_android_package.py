@@ -36,6 +36,21 @@ def pe(machine):
     return bytes(data)
 
 
+def hybrid_pe(metadata=True):
+    data = bytearray(1024)
+    data[:2] = b"MZ"
+    struct.pack_into("<I", data, 60, 128)
+    struct.pack_into("<4sHHIIIHH", data, 128, b"PE\0\0", 0x8664, 1, 0, 0, 0, 240, 0x2022)
+    optional = 152
+    struct.pack_into("<H", data, optional, 0x20b)
+    struct.pack_into("<I", data, optional + 108, 16)
+    struct.pack_into("<II", data, optional + 112 + 10 * 8, 0x1000, 208)
+    struct.pack_into("<8sIIII", data, optional + 240, b".rdata\0\0", 512, 0x1000, 512, 512)
+    struct.pack_into("<I", data, 512, 208)
+    struct.pack_into("<Q", data, 512 + 200, 0x180001100 if metadata else 0)
+    return bytes(data)
+
+
 def prefix(path, machine, extra=None, z_target="/"):
     with tarfile.open(path, "w:xz") as archive:
         for name, content in [(".wine/system.reg", b"WINE REGISTRY Version 2\n"),
@@ -92,7 +107,7 @@ class PackageTests(unittest.TestCase):
         server.write_bytes(elf(machine))
         server.chmod(0o755)
         for name in ["ntdll.dll", "lsteamclient.dll", "steam.exe"]:
-            (self.windows_dir / name).write_bytes(pe(0xa641 if arch == "arm64ec" else 0x8664))
+            (self.windows_dir / name).write_bytes(hybrid_pe() if arch == "arm64ec" else pe(0x8664))
         docs = self.tree / "share/doc/quark-gamenative"
         docs.mkdir(parents=True, exist_ok=True)
         for name in ["Wine-LICENSE", "COPYING.LIB"]:
@@ -143,6 +158,18 @@ class PackageTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "architecture"):
                     self.validate()
                 p.write_bytes(old)
+
+    def test_arm64ec_requires_hybrid_metadata_for_amd64_machine_field(self):
+        import shutil
+        shutil.rmtree(self.tree)
+        self.make_tree("arm64ec")
+        try:
+            self.validate()
+        except ValueError as exc:
+            self.fail(f"Valid ARM64EC hybrid images must be recognized: {exc}")
+        (self.windows_dir / "ntdll.dll").write_bytes(hybrid_pe(metadata=False))
+        with self.assertRaisesRegex(ValueError, "architecture"):
+            self.validate()
 
     def test_rejects_small_elf_page_alignment(self):
         p = self.unix_dir / "ntdll.so"
