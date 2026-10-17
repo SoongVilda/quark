@@ -262,6 +262,7 @@ def build(arch: str, work: Path, output_dir: Path, cache: Path, jobs: int) -> Pa
                                "cargo": _tool_version(["cargo", "--version"], rust_env),
                                "autoconf": _tool_version(["autoconf", "--version"], rust_env),
                                "host_cc": _tool_version(["gcc", "--version"], rust_env),
+                               "host_freetype": _tool_version(["pkg-config", "--modversion", "freetype2"], rust_env),
                                "ndk": _tool_version([str(ndk / "toolchains/llvm/prebuilt/linux-x86_64/bin/clang"), "--version"], rust_env),
                                "llvm_mingw": _tool_version([str(mingw / "bin/clang"), "--version"], rust_env)}}
     lock = ntsync / "Cargo.lock"

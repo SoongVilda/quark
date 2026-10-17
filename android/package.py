@@ -13,8 +13,8 @@ import tempfile
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ARCHES = {
-    "x86_64": {"unix": "x86_64", "elf": 62, "pe": 0x8664, "prefix_pe": 0x8664},
-    "arm64ec": {"unix": "aarch64", "elf": 183, "pe": 0xa641, "prefix_pe": 0xaa64},
+    "x86_64": {"unix": "x86_64", "windows": "x86_64", "elf": 62, "pe": 0x8664, "prefix_pe": 0x8664},
+    "arm64ec": {"unix": "aarch64", "windows": "aarch64", "elf": 183, "pe": 0xaa64, "prefix_pe": 0xaa64},
 }
 
 
@@ -192,7 +192,7 @@ def validate_tree(tree: Path, prefix_pack: Path, arch: str) -> dict:
     tree = tree.resolve(strict=True)
     target = ARCHES[arch]
     unix = f"lib/wine/{target['unix']}-unix"
-    windows = f"lib/wine/{arch}-windows"
+    windows = f"lib/wine/{target['windows']}-windows"
     required = ["bin/wine", "bin/wineserver", f"{unix}/wine", f"{unix}/ntdll.so",
                 f"{unix}/lsteamclient.so", f"{windows}/ntdll.dll",
                 f"{windows}/lsteamclient.dll", f"{windows}/steam.exe",
@@ -204,6 +204,13 @@ def validate_tree(tree: Path, prefix_pack: Path, arch: str) -> dict:
         if not (tree / name).stat().st_mode & 0o111:
             raise ValueError(f"Wine loader/server must be executable: {name}")
         check_elf(tree / name, target["elf"], executable=True)
+    for name in ["ntdll.so", "lsteamclient.so"]:
+        check_elf(tree / unix / name, target["elf"])
+    for name in ["ntdll.dll", "lsteamclient.dll", "steam.exe"]:
+        path = tree / windows / name
+        with path.open("rb") as source:
+            if pe_machine(source, path.stat().st_size) != target["pe"]:
+                raise ValueError(f"Wrong required PE architecture: {name}")
     identities = {}
     pe_arches = {"i386-windows": 0x14c, "x86_64-windows": 0x8664,
                  "aarch64-windows": 0xaa64, "arm64ec-windows": 0xa641}
@@ -225,7 +232,11 @@ def validate_tree(tree: Path, prefix_pack: Path, arch: str) -> dict:
                     check_elf(path, target["elf"])
                 elif magic[:2] == b"MZ":
                     source.seek(0)
-                    machine = pe_machine(source, path.stat().st_size)
+                    is_font = relative.startswith("share/wine/fonts/") and path.suffix.lower() == ".fon"
+                    machine = pe_machine(source, path.stat().st_size, allow_ne=is_font)
+                    if machine is None:
+                        identities[relative] = {"sha256": sha256_file(path)}
+                        continue
                     expected = next((v for k, v in pe_arches.items() if k in path.parts), target["pe"])
                     if machine != expected:
                         raise ValueError(f"Wrong PE architecture: {relative}")

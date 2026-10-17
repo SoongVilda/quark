@@ -92,7 +92,7 @@ class PackageTests(unittest.TestCase):
         self.arch = arch
         unix = "aarch64" if arch == "arm64ec" else "x86_64"
         machine = 183 if arch == "arm64ec" else 62
-        windows = "arm64ec" if arch == "arm64ec" else "x86_64"
+        windows = "aarch64" if arch == "arm64ec" else "x86_64"
         self.unix_dir = self.tree / "lib/wine" / (unix + "-unix")
         self.windows_dir = self.tree / "lib/wine" / (windows + "-windows")
         self.unix_dir.mkdir(parents=True, exist_ok=True)
@@ -107,7 +107,7 @@ class PackageTests(unittest.TestCase):
         server.write_bytes(elf(machine))
         server.chmod(0o755)
         for name in ["ntdll.dll", "lsteamclient.dll", "steam.exe"]:
-            (self.windows_dir / name).write_bytes(hybrid_pe() if arch == "arm64ec" else pe(0x8664))
+            (self.windows_dir / name).write_bytes(pe(0xaa64 if arch == "arm64ec" else 0x8664))
         docs = self.tree / "share/doc/quark-gamenative"
         docs.mkdir(parents=True, exist_ok=True)
         for name in ["Wine-LICENSE", "COPYING.LIB"]:
@@ -163,11 +163,14 @@ class PackageTests(unittest.TestCase):
         import shutil
         shutil.rmtree(self.tree)
         self.make_tree("arm64ec")
+        hybrid = self.tree / "lib/wine/arm64ec-windows/fixture.dll"
+        hybrid.parent.mkdir()
+        hybrid.write_bytes(hybrid_pe())
         try:
             self.validate()
         except ValueError as exc:
             self.fail(f"Valid ARM64EC hybrid images must be recognized: {exc}")
-        (self.windows_dir / "ntdll.dll").write_bytes(hybrid_pe(metadata=False))
+        hybrid.write_bytes(hybrid_pe(metadata=False))
         with self.assertRaisesRegex(ValueError, "architecture"):
             self.validate()
 
@@ -196,6 +199,28 @@ class PackageTests(unittest.TestCase):
         (self.windows_dir / "lsteamclient.dll").unlink()
         with self.assertRaisesRegex(ValueError, "required"):
             self.validate()
+
+    def test_rejects_damaged_required_unix_and_windows_modules(self):
+        for p in [self.unix_dir / "ntdll.so", self.unix_dir / "lsteamclient.so",
+                  self.windows_dir / "ntdll.dll", self.windows_dir / "lsteamclient.dll",
+                  self.windows_dir / "steam.exe"]:
+            old = p.read_bytes()
+            with self.subTest(path=p.name):
+                p.write_bytes(b"damaged module")
+                with self.assertRaisesRegex(ValueError, "ELF|PE"):
+                    self.validate()
+                p.write_bytes(old)
+
+    def test_retains_ne_font_resources_outside_pe_module_directories(self):
+        font = self.tree / "share/wine/fonts/fixture.fon"
+        font.parent.mkdir(parents=True)
+        data = bytearray(pe(0x14c))
+        data[128:132] = b"NE\0\0"
+        font.write_bytes(data)
+        try:
+            self.validate()
+        except ValueError as exc:
+            self.fail(f"Native Wine font resources are NE data, not PE modules: {exc}")
 
     def test_rejects_wrong_empty_and_corrupt_prefix_packs(self):
         prefix(self.pack, 0xaa64)
