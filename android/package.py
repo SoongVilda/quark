@@ -340,6 +340,10 @@ def package_wcp(tree: Path, prefix_pack: Path, arch: str, output: Path, metadata
             for name in ["profile.json", "build-manifest.json"]:
                 archive.add(stage / name, arcname=name, filter=_tar_filter)
             archive.add(prefix_pack, arcname="prefixPack.txz", filter=_tar_filter)
+            # GameNative 1.3.0 opens regular files without making their parents.
+            licenses = tarfile.TarInfo("licenses")
+            licenses.type, licenses.mode = tarfile.DIRTYPE, 0o755
+            archive.addfile(_tar_filter(licenses))
             archive.add(REPO_ROOT / "LICENSE", arcname="licenses/Quark-LICENSE", filter=_tar_filter)
         compressed = stage / "output.wcp"
         try:

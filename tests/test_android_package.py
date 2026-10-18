@@ -4,6 +4,7 @@ import hashlib
 import importlib.util
 import io
 import json
+import os
 import re
 from pathlib import Path
 import struct
@@ -156,6 +157,31 @@ class PackageTests(unittest.TestCase):
         second = self.root / "second-test-fixture.wcp"
         self.package(second)
         self.assertEqual(self.output.read_bytes(), second.read_bytes())
+
+    def test_package_extracts_with_gamenative_130_parent_directory_rules(self):
+        # v1.3.0, 0be4545b34a814dc7227125b3f112ced90706d4b:
+        # TarCompressorUtils.extract opens files without creating their parents.
+        # An ordinary tar reader silently making parents would hide ERROR_BADTAR.
+        self.package()
+        payload = subprocess.check_output(["zstd", "-q", "-d", "-c", str(self.output)])
+        destination = self.root / "GameNative temporary content"
+        destination.mkdir()
+        with tarfile.open(fileobj=io.BytesIO(payload)) as archive:
+            for member in archive:
+                target = destination / member.name
+                try:
+                    if member.isdir():
+                        target.mkdir(exist_ok=True)
+                    elif member.issym():
+                        os.symlink(member.linkname, target)
+                    else:
+                        with target.open("wb") as output:
+                            output.write(archive.extractfile(member).read())
+                except OSError as exc:
+                    self.fail(f"GameNative 1.3.0 cannot extract {member.name}: {exc}")
+        self.assertEqual((destination / "licenses/Quark-LICENSE").read_bytes(),
+                         (REPO / "LICENSE").read_bytes())
+        self.assertEqual(json.loads((destination / "profile.json").read_text())["type"], "Proton")
 
     def test_rejects_wrong_elf_or_pe_architecture(self):
         for p, content in [(self.unix_dir / "ntdll.so", elf(183)),

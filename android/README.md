@@ -100,6 +100,10 @@ Wine's license notices are under `share/doc/quark-gamenative/`. Package checks
 cover ELF/PE architecture, the Android executable interpreter, 16 KiB ELF load
 alignment, required Wine/Steam bridge files, executable modes, prefix structure,
 and archive links. Compression must succeed before the final WCP is published.
+Archive directory entries precede their files, including `licenses/`: GameNative
+1.3.0's extractor opens files without creating missing parent directories. A
+regression test exercises that behavior; generic tar extraction alone is not
+sufficient to verify compatibility with this importer.
 
 For an already installed, independently built tree, the packager is also usable
 directly. Supply the normalized prefix and the completed build's metadata:
