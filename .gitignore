@@ -13,3 +13,6 @@ __pycache__/
 
 # Editor / tooling
 .claude/
+# The scoreboard run writes its table here; it is read into the README by hand
+tests/scoreboard.md
+tests/scoreboard.json

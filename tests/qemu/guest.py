@@ -23,16 +23,15 @@ to a free localhost port) and cloud-init's NoCloud seed served over HTTP
 to the guest at 10.0.2.2.
 
 Usage:
-  tests/qemu/guest.py fetch       download + verify the cloud image
-  tests/qemu/guest.py provision   build provisioned.qcow2 (once)
-  tests/qemu/guest.py test [-k NAME]
+  tests/run.py qemu fetch       download + verify the cloud image
+  tests/run.py qemu provision   build provisioned.qcow2 (once)
+  tests/run.py qemu test [-k NAME]
                                   push the repo, run tests/qemu/suite.py,
                                   copy LOG_DIR and SUITE_DIR back to
                                   SUITE_DIR/qemu/<stamp> on the host
-  tests/qemu/guest.py shell       fresh run overlay + an interactive ssh
+  tests/run.py qemu shell       fresh run overlay + an interactive ssh
 """
 
-import argparse
 import functools
 import hashlib
 import http.server
@@ -238,7 +237,7 @@ class Guest:
         die(f"guest never answered ssh within {BOOT_TIMEOUT}s; see {SERIAL_LOG}")
 
 
-# The stand-in Steam root: what install.py and the launcher look for, with no
+# The stand-in Steam root: What install.py and the launcher look for, with no
 # Steam client. Its "Proton" prefix template is a stock `wineboot --init`
 # prefix, so install.py's template step bakes a real prefix rather than being
 # skipped.
@@ -271,7 +270,7 @@ def provision() -> None:
         subprocess.run(["qemu-img", "create", "-q", "-f", "qcow2", str(BUILD_CACHE), "40G"], check=True)
     seed = SeedServer(pubkey)
     try:
-        # Two boots: the upgrade replaces the kernel, and the running one's
+        # Two boots: The upgrade replaces the kernel, and the running one's
         # modules (ntsync among them) are gone until the guest boots the new one.
         with Guest(PROVISIONED, seed) as g:
             g.ssh("sudo cloud-init status --wait >/dev/null")
@@ -315,7 +314,7 @@ def repo_tarball(dest: Path) -> Path:
 
 def run_tests(selector: str | None) -> int:
     if not QEMU_READY.exists():
-        die("no finished provision; run: tests/qemu/guest.py provision")
+        die("no finished provision; run: tests/run.py qemu provision")
     out = SUITE_DIR / "qemu" / datetime.now().strftime("%Y%m%d-%H%M%S")
     for sub in ("quark", "suite"):
         (out / sub).mkdir(parents=True, exist_ok=True)
@@ -335,29 +334,22 @@ def run_tests(selector: str | None) -> int:
 
 def shell() -> None:
     if not QEMU_READY.exists():
-        die("no finished provision; run: tests/qemu/guest.py provision")
+        die("no finished provision; run: tests/run.py qemu provision")
     overlay(RUN, PROVISIONED)
     with Guest(RUN) as g:
         subprocess.run(g.ssh_base())
 
 
-def main() -> None:
+def main(command: str, only: str | None = None) -> int:
     for tool in ("qemu-system-x86_64", "qemu-img", "ssh", "scp", "ssh-keygen", "git"):
         if not shutil.which(tool):
             die(f"{tool} not found")
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("command", choices=["fetch", "provision", "test", "shell"])
-    p.add_argument("-k", metavar="NAME", help="run only probes whose name contains NAME")
-    a = p.parse_args()
-    if a.command == "fetch":
+    if command == "fetch":
         fetch()
-    elif a.command == "provision":
+    elif command == "provision":
         provision()
-    elif a.command == "test":
-        sys.exit(run_tests(a.k))
+    elif command == "test":
+        return run_tests(only)
     else:
         shell()
-
-
-if __name__ == "__main__":
-    main()
+    return 0

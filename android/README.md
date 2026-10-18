@@ -4,14 +4,26 @@ This builds Android Wine with the applicable Quark patches and packages it as a
 GameNative `.wcp`. **It does not port or run Quark's Rust launcher.** GameNative
 continues to manage launching, prefixes, graphics, and its Android Steam bridge.
 
-The package name starts with `quark-patched-0.1.0-proton-11.0-2` and ends with
+The package name starts with `quark-patched-0.2.0-proton-11.0-2` and ends with
 `arm64ec` or `x86_64`. These are experimental builds; successful compilation and
 archive validation do not establish game compatibility or performance gains.
 
-Inside GameNative the numeric profile version is **11.0-2.901**, with the Quark
+Inside GameNative the numeric profile version is **11.0-2.902**, with the Quark
 name in its description. GameNative's identifier parser requires numeric version
 fields; a branded `versionName` would silently select the bundled Wine instead.
 The filenames and build manifest retain the full Quark identity.
+
+## Upstream v0.2.0 test update
+
+This local test update incorporates Quark v0.2.0 from upstream `main` at
+`ac2702452b89f8b651bc30987e8ff0407790bf19`. The selected Wine and lsteamclient
+patches are unchanged from v0.1.0, and the pinned GameNative Wine base is retained.
+Upstream's new launch graph, process handling, and installer optimizations apply
+to its desktop launcher. They do not change this Android Wine payload.
+
+Profile `11.0-2.902` can be installed alongside the earlier `11.0-2.901` package
+for comparison. The earlier S25 Ultra FPS observations refer to the v0.1.0
+package; the v0.2.0 package awaits device testing.
 
 ## What is included
 
@@ -118,8 +130,8 @@ python3 android/package.py --arch arm64ec --tree /path/to/installed-wine \
 
 ```sh
 cd /tmp/quark-wcp-output
-sha256sum -c quark-patched-0.1.0-proton-11.0-2-arm64ec.wcp.sha256
-tar --zstd -tf quark-patched-0.1.0-proton-11.0-2-arm64ec.wcp
+sha256sum -c quark-patched-0.2.0-proton-11.0-2-arm64ec.wcp.sha256
+tar --zstd -tf quark-patched-0.2.0-proton-11.0-2-arm64ec.wcp
 ```
 
 Import the matching `.wcp` through GameNative's Wine/Proton manager. Create a
@@ -136,8 +148,8 @@ working anti-cheat.
 Run the repository checks with:
 
 ```sh
-python3 tests/run.py --layer android --layer gate
-python3 tests/run.py --continue
+python3 tests/run.py suite --layer android --layer gate
+python3 tests/run.py suite --continue
 ```
 
 Tests use temporary non-runnable fixtures to exercise package validation; those

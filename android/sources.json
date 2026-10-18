@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "version_name": "quark-patched-0.1.0-proton-11.0-2",
+  "version_name": "quark-patched-0.2.0-proton-11.0-2",
   "wine": {
     "repository": "https://github.com/GameNative/proton-wine.git",
     "revision": "b2e449b22ba46b9ceb3a51623253cd9693ccc409"
@@ -64,5 +64,5 @@
       "sha256": "e03bb5de70246d43515426e08d1546de6c04b57d295eed41a22c0ff09f8c5137"
     }
   ],
-  "profile_version_name": "11.0-2.901"
+  "profile_version_name": "11.0-2.902"
 }

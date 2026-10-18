@@ -34,7 +34,7 @@ jobs:
           targets: aarch64-linux-android,x86_64-linux-android
 
       - name: Test Android build support
-        run: python3 tests/run.py --layer android --layer gate
+        run: python3 tests/run.py suite --layer android --layer gate
 
       - name: Cache verified toolchain downloads and extraction
         uses: actions/cache@v4

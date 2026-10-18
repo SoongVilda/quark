@@ -11,6 +11,9 @@ mod log;
 #[path = "../../rust/src/quark/pe_scanner.rs"]
 mod pe_scanner;
 #[allow(dead_code)]
+#[path = "../../rust/src/quark/graph.rs"]
+mod graph;
+#[allow(dead_code)]
 #[path = "../../rust/src/quark/launcher.rs"]
 mod launcher;
 
@@ -145,14 +148,15 @@ fn deploy_cache_round_trips_and_rejects_foreign_data() {
     let t = TempDir::new("cache");
     assert!(DeployCache::load(t.path()).is_none());
 
-    DeployCache { wine_hash: 1, dxvk_hash: 2, vkd3d_hash: 3, steam_hash: 4, scan_hash: u64::MAX }
+    DeployCache { wine_hash: 1, dxvk_hash: 2, vkd3d_hash: 3, steam_hash: 4, scan_hash: u64::MAX,
+                  exe_stamp: 7, scan_flags: 1 }
         .save(t.path());
     let c = DeployCache::load(t.path()).unwrap();
-    assert_eq!((c.wine_hash, c.dxvk_hash, c.vkd3d_hash, c.steam_hash, c.scan_hash),
-               (1, 2, 3, 4, u64::MAX));
+    assert_eq!((c.wine_hash, c.dxvk_hash, c.vkd3d_hash, c.steam_hash, c.scan_hash, c.exe_stamp, c.scan_flags),
+               (1, 2, 3, 4, u64::MAX, 7, 1));
 
     let cache_file = fs::read_dir(t.path()).unwrap().next().unwrap().unwrap().path();
-    for garbage in ["v3:1,2,3,4,5", "v4:1,2,3", "v4:a,b,c,d,e", ""] {
+    for garbage in ["v3:1,2,3,4,5", "v4:1,2,3,4,5", "v5:1,2,3", "v5:a,b,c,d,e,f,g", ""] {
         fs::write(&cache_file, garbage).unwrap();
         assert!(DeployCache::load(t.path()).is_none(), "accepted {garbage:?}");
     }
