@@ -1,8 +1,52 @@
 # quark
 
-Experimental Android packaging support is documented in
-[`android/README.md`](android/README.md). It builds Quark-patched GameNative Wine
-WCPs; it does not run the desktop Quark launcher on Android.
+## GameNative addition in this branch
+
+This branch adds experimental Quark-patched Wine packages for GameNative on
+Android, in `.wcp` format, for ARM64EC and x86_64. GameNative handles the Android
+launch flow; Quark's Rust launcher remains desktop-only.
+
+### Build the GameNative packages
+
+Use an x86_64 Linux host and install the prerequisites in the
+[Android build guide](android/README.md#build-locally). From a clean, committed
+checkout, run the builds one at a time:
+
+```sh
+python3 android/build.py --arch arm64ec \
+  --work-dir /tmp/quark-arm64ec-build \
+  --cache-dir /tmp/quark-android-cache \
+  --output-dir /tmp/quark-wcp-output --jobs 4
+
+python3 android/build.py --arch x86_64 \
+  --work-dir /tmp/quark-x86_64-build \
+  --cache-dir /tmp/quark-android-cache \
+  --output-dir /tmp/quark-wcp-output --jobs 4
+```
+
+Use a new empty work directory for each build attempt; the download cache can be
+reused. The driver downloads and verifies the pinned toolchains and sources,
+builds Wine, and writes the `.wcp` packages and SHA-256 checksums to
+`/tmp/quark-wcp-output`. Import the matching `.wcp` through GameNative's
+Wine/Proton manager and create a fresh container. The profile version shown in
+GameNative is `11.0-2.901` with the architecture suffix.
+
+The [Android build guide](android/README.md) also covers the manual GitHub
+Actions workflow, patch selection, and package verification.
+
+### Early results on the Galaxy S25 Ultra
+
+**Reported by SoongVilda, testing on a Samsung Galaxy S25 Ultra (S25U):**
+
+> In my tests, Trackmania Nations Forever and FlatOut: Ultimate Carnage had
+> about 15–20% higher FPS with this build than with the official Proton builds
+> bundled with GameNative. I also saw higher and more stable GPU utilization:
+> usually around 95%, compared with roughly 75–88% with bundled Proton.
+
+These are early observations from these two games on this device; results may
+vary with the game, settings, and device conditions.
+
+## Upstream project overview
 
 ATTENTION: Still-in-development software, published for testing. Two games
 reach their menus through it as of 2026-10-17; the rest of the list below
