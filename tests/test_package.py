@@ -244,7 +244,3 @@ def run_tests() -> int:
     test_prefix_init(r)
 
     return r.summary()
-
-
-if __name__ == "__main__":
-    sys.exit(run_tests())

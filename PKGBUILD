@@ -8,7 +8,7 @@
 # ~/.local/share/Steam/compatibilitytools.d/quark. That is why the Wine
 # build toolchain is a runtime dependency of this package.
 pkgname=quark
-pkgver=0.1.0
+pkgver=0.2.0
 pkgrel=1
 epoch=1
 pkgdesc="Proton replacement launcher on the stock Wine wineserver, for Steam"

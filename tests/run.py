@@ -1,33 +1,47 @@
 #!/usr/bin/env python3
-"""quark test runner -- one entry point for the whole suite.
+"""quark tests: one entry point for everything the suite can do.
 
-Layers:
-  unit    cargo test: the Rust tests under tests/rust, each compiling the
+    python3 tests/run.py                          # the suite, every layer
+    python3 tests/run.py suite --layer unit       # one layer (repeatable)
+    python3 tests/run.py suite --continue         # keep going after a failure
+    python3 tests/run.py launch                   # Balatro through quark, 30 s
+    python3 tests/run.py launch 379720 --trace    # one game, under a montauk capture
+    python3 tests/run.py launch --all             # every installed Windows game
+    python3 tests/run.py scoreboard               # the end-of-version table, quark only
+    python3 tests/run.py scoreboard --tools proton-exp,proton11   # with the A/B columns
+    python3 tests/run.py qemu provision           # once: The VM image
+    python3 tests/run.py qemu test                # the suite in the VM
+    python3 tests/run.py heap-repro               # the heap-corruption repro under the observer
+
+The layers of `suite`:
+  unit    cargo test: The Rust tests under tests/rust, each compiling the
           source module it covers
   gate    checks that need no install (Steam-safe process scoping)
-  deploy  the compat tool install.py deployed: package structure and patch
+  deploy  the compat tool install.py deployed: Package structure and patch
           verification; skipped (not failed) when nothing is deployed
-  launch  a real game through iterate.py; skipped when nothing is deployed
-  qemu    the full suite in a disposable VM (tests/qemu/guest.py): install,
+  launch  a real game through the harness; skipped when nothing is deployed
+  qemu    the full suite in a disposable VM (tests/qemu/): install,
           probes and the layers above; skipped when no image is provisioned
 
-Usage:
-  python3 tests/run.py                  # every layer
-  python3 tests/run.py --layer unit     # one layer (repeatable)
-  python3 tests/run.py --continue       # keep going after a failure
+quark is the tool under test everywhere. The Proton tools exist only behind
+`--tool` and `--tools`, for an A/B run, the way PANDEMONIUM's suite keeps
+other schedulers behind a flag. `scoreboard` is the sanity check at the end
+of a version, run by hand; it is not a layer.
 """
 import argparse
 import subprocess
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from quark_common import REPO_ROOT, COMPAT_DIR, QEMU_READY, log_info, log_warn, log_error
+TESTS = Path(__file__).resolve().parent
+sys.path.insert(0, str(TESTS.parent))
+sys.path.insert(0, str(TESTS))
+from quark_common import REPO_ROOT, COMPAT_DIR, QEMU_READY, log_info, log_warn, log_error  # noqa: E402
 
-TESTS = REPO_ROOT / "tests"
 PY = sys.executable
+RUN = str(TESTS / "run.py")
 
-# A hung test must fail, not wait: every step is bounded. The QEMU suite's
+# A hung test must fail, not wait: Every step is bounded. The QEMU suite's
 # first run builds patched Wine on the cache disk, hence its own bound.
 STEP_TIMEOUT = 900  # seconds
 LAYER_TIMEOUT = {"qemu": 7200}
@@ -37,19 +51,26 @@ LAYERS = {
         ("cargo test", ["cargo", "test", "--release"]),
     ],
     "gate": [
-        ("steam safety", [PY, str(TESTS / "test_iterate_steam_safety.py")]),
+        ("steam safety", [PY, RUN, "_step", "steam-safety"]),
     ],
     "deploy": [
-        ("package", [PY, str(TESTS / "test_package.py")]),
-        ("patches", [PY, str(TESTS / "verify_patches.py")]),
+        ("package", [PY, RUN, "_step", "package"]),
+        ("patches", [PY, RUN, "_step", "patches"]),
     ],
     "launch": [
-        ("iterate", [PY, str(TESTS / "iterate.py"), "--skip-build",
-                     "--timeout", "20", "--appid", "2379780"]),
+        ("launch", [PY, RUN, "launch", "2379780", "--skip-build", "--timeout", "20"]),
     ],
     "qemu": [
-        ("qemu suite", [PY, str(TESTS / "qemu" / "guest.py"), "test"]),
+        ("qemu suite", [PY, RUN, "qemu", "test"]),
     ],
+}
+
+# Each layer step runs as its own bounded subprocess, so a hung test fails
+# on its timeout; the step itself is a module function, called here.
+STEPS = {
+    "steam-safety": ("test_steam_safety", "run_tests"),
+    "package": ("test_package", "run_tests"),
+    "patches": ("verify_patches", "run_tests"),
 }
 NEEDS_DEPLOY = {"deploy", "launch"}
 
@@ -68,14 +89,8 @@ def run_step(name: str, cmd: list[str], timeout: int) -> bool:
     return True
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description="quark test runner")
-    parser.add_argument("--layer", action="append", choices=list(LAYERS),
-                        help="run only this layer (repeatable)")
-    parser.add_argument("--continue", dest="keep_going", action="store_true",
-                        help="keep going after a failure")
-    args = parser.parse_args()
-
+def run_suite(args: argparse.Namespace) -> int:
+    from harness.procs import cleanup_processes
     deployed = (COMPAT_DIR / "proton").exists()
     passed, failed, skipped = 0, 0, 0
     for layer in args.layer or list(LAYERS):
@@ -85,12 +100,11 @@ def main() -> int:
             skipped += len(steps)
             continue
         if layer == "qemu" and not QEMU_READY.exists():
-            log_warn(f"layer {layer}: SKIP, no finished provision (run tests/qemu/guest.py provision)")
+            log_warn(f"layer {layer}: SKIP, no finished provision (run tests/run.py qemu provision)")
             skipped += len(steps)
             continue
         log_info(f"layer {layer}")
         if layer == "launch":
-            from iterate import cleanup_processes
             cleanup_processes()
         for name, cmd in steps:
             if run_step(name, cmd, LAYER_TIMEOUT.get(layer, STEP_TIMEOUT)):
@@ -110,6 +124,62 @@ def main() -> int:
         return 1
     log_info(f"PASS: {summary}")
     return 0
+
+
+def run_qemu(args: argparse.Namespace) -> int:
+    from qemu import guest
+    return guest.main(args.action, args.k)
+
+
+def run_heap_repro(args: argparse.Namespace) -> int:
+    from heap_repro import run as heap_repro
+    return heap_repro.main(args.rest)
+
+
+def run_step_module(args: argparse.Namespace) -> int:
+    import importlib
+    module, func = STEPS[args.name]
+    return int(getattr(importlib.import_module(module), func)() or 0)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="quark tests", formatter_class=argparse.RawDescriptionHelpFormatter,
+                                     epilog=__doc__.split("\n", 2)[2])
+    sub = parser.add_subparsers(dest="command", metavar="{suite,launch,scoreboard,qemu,heap-repro}")
+
+    p = sub.add_parser("suite", help="the layered suite (the default)")
+    p.add_argument("--layer", action="append", choices=list(LAYERS), help="run only this layer (repeatable)")
+    p.add_argument("--continue", dest="keep_going", action="store_true", help="keep going after a failure")
+    p.set_defaults(func=run_suite)
+
+    from harness import launch, scoreboard
+    p = sub.add_parser("launch", help="build, install, launch and monitor one game, or every one")
+    launch.add_arguments(p)
+    p.set_defaults(func=launch.run)
+
+    p = sub.add_parser("scoreboard", help="the end-of-version table: every game, quark and any tool named")
+    scoreboard.add_arguments(p)
+    p.set_defaults(func=scoreboard.run)
+
+    p = sub.add_parser("qemu", help="the disposable-VM suite")
+    p.add_argument("action", choices=["fetch", "provision", "test", "shell"])
+    p.add_argument("-k", metavar="NAME", default=None, help="test: run only probes whose name contains NAME")
+    p.set_defaults(func=run_qemu)
+
+    p = sub.add_parser("heap-repro", help="the heap-corruption repro under the observer")
+    p.add_argument("rest", nargs=argparse.REMAINDER, help="--runs N, --no-build, --timeout S")
+    p.set_defaults(func=run_heap_repro)
+
+    p = sub.add_parser("_step")
+    p.add_argument("name", choices=list(STEPS))
+    p.set_defaults(func=run_step_module)
+
+    if len(sys.argv) == 1 or sys.argv[1].startswith("-") and sys.argv[1] not in ("-h", "--help"):
+        sys.argv.insert(1, "suite")
+    args = parser.parse_args()
+    if args.command is None:
+        args = parser.parse_args(["suite"])
+    return args.func(args)
 
 
 if __name__ == "__main__":

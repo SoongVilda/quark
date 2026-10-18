@@ -92,12 +92,12 @@ def teardown(proc) -> None:
                 break
             except subprocess.TimeoutExpired:
                 continue
-    # 2. The reliable layer: reap anything (detached wineserver, montauk, wine)
+    # 2. The reliable layer: Reap anything (detached wineserver, montauk, wine)
     #    still bound to the throwaway prefix.
     n = _kill_by_prefix_env(str(PFX))
     if n:
         log_info(f"teardown: reaped {n} lingering process(es) bound to {PFX.name}")
-    # 3. Belt-and-suspenders: a montauk observer still streaming our trace.
+    # 3. Belt-and-suspenders: A montauk observer still streaming our trace.
     subprocess.run(["pkill", "-KILL", "-f", f"trace-out {TRACE_OUT}"],
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
@@ -127,7 +127,7 @@ def run_once(idx: int, timeout_s: int) -> str:
     stalled = False
     proc = None
     with open(stderr_log, "w") as ef:
-        # start_new_session: the launcher leads its own session/pgroup so the
+        # start_new_session: The launcher leads its own session/pgroup so the
         # whole non-detached tree is killable together and a SIGTERM to this
         # script does not race-kill half of it.
         proc = subprocess.Popen([str(PROTON), "run", str(EXE)],
@@ -176,13 +176,13 @@ def analyze():
     subprocess.run([str(analyzer), str(trace), "--report", "abortpm"])
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser()
+def main(argv: list[str]) -> int:
+    ap = argparse.ArgumentParser(prog="tests/run.py heap-repro")
     ap.add_argument("--runs", type=int, default=1)
     ap.add_argument("--no-build", action="store_true")
     ap.add_argument("--timeout", type=int, default=120,
                     help="per-run wall-clock limit (s); exceeding it is a STALL")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
     if not PROTON.exists():
         log_error(f"{PROTON} missing — install quark first")
@@ -211,7 +211,3 @@ def main() -> int:
             break
     log_info(f"done: {hits}/{args.runs} hit (#18 crash or stall)")
     return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())

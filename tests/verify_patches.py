@@ -2,11 +2,11 @@
 """Verify that the Wine and lsteamclient patches are applied, compiled and
 deployed.
 
-  1. Deployment: the patched files exist with non-zero size
-  2. Source: every patch's added lines are present in the tree it patches,
+  1. Deployment: The patched files exist with non-zero size
+  2. Source: Every patch's added lines are present in the tree it patches,
      derived from the patch itself, so a new patch is covered with no edit
   3. Binary: strings, symbols and PE exports the patches compile in
-  4. Runtime: the bwrap layer, the launcher's env and the last game log
+  4. Runtime: The tree's own loader, the launcher's env and the last game log
 
 A check that cannot run (no source tree, no game log yet) is a SKIP, never a
 PASS. Exit 0 = no failures. Exit 1 = failures found.
@@ -198,20 +198,21 @@ def run_tests() -> int:
               f"cache MISMATCH: cached={h1} deployed={h2} — stale cache at {LSTEAMCLIENT_CACHE}")
     print()
 
-    print("SECTION 8: bwrap layer (lsteamclient deployment via mount namespace)")
-    # lsteamclient lives only in compat_dir/lib/wine/. The launcher wraps wine
-    # in bwrap with --bind compat_dir/lib/wine over /usr/lib/wine, so Wine's
-    # loader finds it at the system path inside the namespace while the real
-    # /usr/lib/wine is never touched. A copy in the real /usr/lib/wine means a
-    # past install poisoned the system.
-    check(Path("/usr/bin/bwrap").exists(),
-          "bwrap: /usr/bin/bwrap installed",
-          "bwrap: NOT INSTALLED — patches will not load at runtime (pacman -S bubblewrap)")
+    print("SECTION 8: the tree's own loader (lsteamclient deployment without a namespace)")
+    # lsteamclient lives only in compat_dir/lib/wine/. The launcher runs the
+    # tree's bin/wine, a copy of the system loader, and Wine resolves lib/wine
+    # relative to it; a symlinked loader would resolve /proc/self/exe to the
+    # system's and load the system tree. A copy of the bridge in the real
+    # /usr/lib/wine means a past install poisoned the system.
+    tree_wine = COMPAT_DIR / "bin" / "wine"
+    check(tree_wine.is_file() and not tree_wine.is_symlink(),
+          "bin/wine: a copy of the loader, not a symlink",
+          "bin/wine: SYMLINK or missing — the tree's modules would not load (re-run install.py)")
     for leak in (sys_unix / "lsteamclient.so",
                  Path("/usr/lib/wine/x86_64-windows/lsteamclient.dll")):
         check(not leak.exists() and not leak.is_symlink(),
               f"/usr/lib/wine clean: no {leak.name} leak",
-              f"/usr/lib/wine LEAK: {leak} exists — left over from a pre-bwrap install (sudo rm to clean)")
+              f"/usr/lib/wine LEAK: {leak} exists — left over from an old install (sudo rm to clean)")
     print()
 
     print("SECTION 9: Launcher env vars")
@@ -262,7 +263,3 @@ def run_tests() -> int:
         return 1
     print("\nNo failures")
     return 0
-
-
-if __name__ == "__main__":
-    sys.exit(run_tests())

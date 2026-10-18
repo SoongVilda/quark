@@ -1,255 +1,380 @@
 # quark
 
-ATTENTION: Still-in-development software, published for testing. Two games
-reach their menus through it as of 2026-10-17; the rest of the list below
-has not been run yet.
+quark is a Proton replacement for Steam on Linux, built in Rust, that
+launches Windows games on the Wine your distribution ships instead of a
+fork of it. It answers the four verbs Steam speaks to a compatibility tool
+(`waitforexitandrun`, `run`, `getcompatpath`, `getnativepath`) and owns
+everything around the launch: The prefix and its registry, DXVK,
+VKD3D-Proton and dxvk-nvapi deployed into it, the bridge between the game's
+`steam_api` and the running Steam client, the environment the game sees,
+the session it runs in and, when asked, an eBPF capture of the whole run.
+Seven small patches sit on stock Wine 11.20. Nothing is vendored, and
+nothing runs in a container or a namespace.
 
-quark is a Proton replacement launcher for Steam on Linux, in one Rust
-binary. It drops in as a Steam compatibility tool, answers the four verbs
-Steam speaks to Proton (`waitforexitandrun`, `run`, `getcompatpath`,
-`getnativepath`) and launches Windows games on the Wine your distribution
-ships, wineserver included. It owns everything around that launch: The
-prefix and its registry, DXVK and VKD3D-Proton deployed into it, the
-bridge between the game's `steam_api` and the running Steam client, the
-environment the game sees, the process group it runs in and, when asked,
-an eBPF capture of the whole run.
+A launch ordered as a topological sort over declared nodes, the wineserver
+started as a node ahead of the first Wine process, a deploy cache keyed per
+component by one stat each, a PE import scan that runs only when the exe
+changes, Proton's steamclient trampoline ported to upstream Wine, the
+compat tree run from a copy of Wine's own loader so its patched modules
+load relative to it, a session held by the game's pidfd that ends the whole
+prefix on Steam's Stop and waits for it on a normal exit, save data
+snapshotted as hardlinks and restored only where a file went missing, an
+installer that is itself a build system with verifying traces, and a test
+suite with one entry point. The launcher's own work on a cache hit is 11 to
+15 ms, and the game is spawned 31 ms after Steam starts the launcher.
 
-The thesis is that the launcher is the part of Proton worth owning and the
-Wine fork is not. Proton is a Python launcher, a Wine fork carrying
-thousands of patches, a container runtime and a bundled set of translation
-layers, released together. quark keeps the launcher, written to be read,
-and puts seven small patches on top of stock Wine 11.20: One is Proton's
-own steamclient trampoline ported to upstream, the rest are a few hundred
-lines of ntdll, kernelbase and winepulse. The translation layers come from
-their upstream releases. Nothing is vendored, nothing runs in a container,
-and the Wine that runs the game is the one `pacman` installed, loaded
-through a mount namespace so its patched modules never touch `/usr`.
+Every number in this file comes from a [montauk](https://github.com/wllclngn/montauk)
+capture or the harness's own clock.
 
-v0.1.0 restarts the project as that launcher alone. The wineserver
-replacement, its display helper and the fork tooling that had grown around
-the launcher were removed, and the version number restarted with them.
-What remains is verified the way the rest of this tree is verified: A
-disposable VM runs the whole install and seven probe programs through the
-launcher under a [montauk](https://github.com/wllclngn/montauk) capture before any real game is
-touched, and every bug fixed on the way to v0.1.0 was found by reading a
-capture, a loader trace or the registry rather than by guessing. The two
-that turned a blank screen into a menu are written up under
-[Diagnosing a launch](#diagnosing-a-launch).
+## Performance
 
-## Status
+12 AMD Zen CPUs (Ryzen 5 3600), GeForce RTX 2060 (NVIDIA 615.78.08), kernel
+7.2.11-arch1-1, Wine 11.20, PANDEMONIUM as the scheduler.
 
-Verified on Arch Linux with an RTX 2060 (NVIDIA 615.78.08, Wine 11.20,
-kernel 7.2.11), through `tests/iterate.py`:
+Games are launched through `tests/run.py launch`. A cold launch starts with
+no wineserver for the prefix. A Proton run gets its own prefix beside
+quark's, so neither tool touches the other's.
+
+### Launch to the Game's Process (cold server, Balatro)
+
+| | Proton Experimental | quark |
+|---|---|---|
+| ms | 4,067 to 4,123 | **3,554 to 3,586** |
+
+Both tools on the same box in the same minute. The harness also times the
+game's first window, but that number does not compare across tools: Proton
+names every window of the session `steam_app_<appid>`, steam.exe's
+included, so its first match is not the game's.
+
+### The Launcher's Own Work (cache hit)
+
+| Phase | ms |
+|---|---|
+| Discover | 0 |
+| Launch graph, all nine nodes | 7 to 11 |
+| Through the environment | 11 to 15 |
+| Game spawned | **31** |
+
+From the timing line `QUARK_VERBOSE=1` writes, which lists every node of
+the graph with its own time.
+
+### Wineserver Started as a Node (cold server, Balatro, median of three)
+
+| | Without the node | With the node |
+|---|---|---|
+| To the game's process | 3,613 ms | **3,577 ms** |
+| To the game's window | 4,462 ms | **4,317 ms** |
+
+### NVIDIA Helper Spawns
+
+| Workload | Inside `bwrap --dev-bind / /` | quark, no namespace |
+|---|---|---|
+| Vulkan instance, NVML init, GLX and EGL display (three C probes) | 8 | **0** |
+| A Balatro launch | 24 | **0** |
+
+`nvidia-modprobe` exec events, counted from montauk captures.
+
+### Memory (45 s into the run, every cell under the same capture)
+
+| Game | Proton 11 | Proton Experimental | quark |
+|---|---|---|---|
+| Hollow Knight, resident set | 1,695 MB | 1,649 MB | **1,369 MB** |
+| Hollow Knight, processes | 13 | 13 | **11** |
+| Balatro, resident set | 1,194 MB | not run | **899 MB** |
+| Balatro, processes | 12 | not run | **10** |
+
+### ntsync on the Stock Wineserver (traced launch)
+
+| Game | Engine | ntsync ioctls | Window |
+|---|---|---|---|
+| Balatro | LÖVE | 21,700 | 40 s |
+| Hollow Knight | Unity 6 | 36,734 | 30 s |
+| TMNT: Shredder's Revenge | FNA/.NET | 59,437 | 30 s |
+| Halls of Torment | Godot/.NET | 141,521 | 30 s |
+| Wedding Witch | Unity | 420,795 | 30 s |
+| DOOM (2016) | id Tech 6 | 600,497 | 30 s |
+
+Wine 11.20 uses `/dev/ntsync` on its own when the device opens; no
+variable turns it on.
+
+### Session End (Balatro)
+
+| Event | Result |
+|---|---|
+| Steam's Stop, SIGTERM to the launcher | Nothing left on the prefix after **1.6 s** |
+| steam.exe killed while the game runs | The game keeps running and the launcher waits |
+| The game quits | The launcher exits **4.6 s** later with nothing left |
+
+### Installer (seventeen steps)
+
+| Run | Wall time |
+|---|---|
+| As a graph, empty cache | 393 s (Patch Wine 147 s, then the Steam bridge 237 s) |
+| As a graph, every trace rebuilt, Wine object dir warm | 85 s |
+| As a graph, nothing changed | **2 s** |
+
+Patch Wine and the Steam bridge both rewrite the Wine source tree, so they
+run in series and set the cold time; every other step runs beside Patch
+Wine.
+
+## Compatibility
 
 | Game | Engine | Result |
 |---|---|---|
-| Hollow Knight | Unity 6 | Reaches its language menu, Steam logged in, D3D11 through DXVK on the GPU |
-| Balatro | LÖVE | Reaches its main menu, Steam API live |
-| TMNT: Shredder's Revenge | FNA/.NET | Not yet run under v0.1.0 |
-| Wedding Witch | Unity | Not yet run under v0.1.0 |
-| Halls of Torment | Godot/.NET | Not yet run under v0.1.0 |
+| Hollow Knight | Unity 6 | Language menu, Steam logged in, D3D11 through DXVK on the GPU |
+| Balatro | LÖVE | Main menu, Steam API live |
+| DOOM (2016) | id Tech 6 | Main menu, native Vulkan, Steam logged in |
+| TMNT: Shredder's Revenge | FNA/.NET | Intro cutscene |
+| Wedding Witch | Unity | Intro, skip prompt live |
+| Halls of Torment | Godot/.NET | Hero select, Steam API live |
 
-The QEMU suite is green: Install, seven probes (Direct3D 11 through DXVK
-on lavapipe, audio enumeration, the window and message pump, the Windows
-environment and registry, threads and sync objects, the Steam bridge with
-no Steam running and a GL plus audio stress) and the unit, gate and deploy
-layers, with every montauk capture covering the probe, steam.exe and the
-wineserver.
+64-bit games; the patched modules are built for x86_64. EasyAntiCheat
+titles need the kernelbase patches deployed, which they are not yet, and
+BattlEye is not wired.
 
-Open:
+## Key Features
 
-- Stopping a game from Steam's Stop button does not reach it yet. The
-  launcher ignores SIGINT and SIGTERM and its children inherit that; close
-  the game itself.
-- Anti-cheat is untested. The EasyAntiCheat patches apply and build, but
-  the kernelbase module they live in is not deployed yet, and BattlEye has
-  nothing yet.
-- The two working games were launched through the harness, not yet from
-  Steam's own Play button.
-- DXVK, VKD3D-Proton and dxvk-nvapi are fetched from each project's latest
-  release rather than pinned by hash.
+### Launch Graph
 
-## Components
+The launch is a topological sort. Each node names the nodes it needs;
+`graph.rs` keeps every node's in-degree, starts each node whose count
+reaches zero on its own scoped thread, and as each one finishes releases
+the nodes waiting on it (Kahn's algorithm [1]). Outputs are keyed by node
+and read by dependents, which always run after their producers.
 
-| Component | Where | Role |
+| Node | Needs | Does |
 |---|---|---|
-| **quark** | `rust/src/quark/` | The launcher. One binary crate, 2,600 lines: `launcher.rs` (the six launch phases), `pe_scanner.rs` (the game's import table, read positionally), `cli.rs` (the four verbs) and `log.rs`. Installed as `compatibilitytools.d/quark/quark` with `proton` linked to it, which is the name Steam execs. |
-| **install.py** | repo root | The installer, sixteen steps that each name their inputs, outputs and failure. Builds quark, deploys the system Wine tree beside it, clones the matching Wine source, applies the patches strictly and builds the modules they touch, bakes the prefix template from Proton 11.0, builds the Steam bridge from Proton's source, downloads the translation layers and writes the compatibility-tool manifests. |
-| **patches/** | `patches/wine`, `patches/lsteamclient` | Seven Wine patches and two lsteamclient patches, each with a `Subject:` and a rationale header, numbered in order by module. They apply with `git apply --check` and no fuzz, or the install fails naming the patch. |
-| **Steam bridge** | built into `lib/wine/` | `steam.exe`, a Wine builtin built from Proton's steam_helper, and `lsteamclient.dll` with `lsteamclient.so`, built from Proton 11.0's lsteamclient against the system Wine's source. The game's `steam_api` reaches the running Steam client through them. |
-| **quark_common.py** | repo root | One definition each of the paths, the `[HH:MM:SS] [LEVEL]` logger, Steam's quark-mapped appids and the Wine process hygiene (per-prefix `wineserver -k`, stale-socket detection). `install.py` and every test import it. |
-| **tests/** | `tests/` | One runner in layers, the Rust tests beside the source they compile, the deployed-package and patch verification, the game harness and the QEMU suite. |
+| **registry** | | Lays out a new prefix from the Wine tree's PE modules, seeds the template's registry and profile directories, and injects the launcher's stubs and the Steam keys after the seed, never before, since a `.reg` file that exists is never replaced. Reads neither hive when both are as its last run left them. |
+| **scan** | | Reads the game exe's import table with positional reads, never the whole file: Its render API and whether it imports `steam_api`, `nvapi` or `nvngx`. A stub with no D3D imports (the Unreal pattern) defers to the shipping binary under `Binaries/Win64`. On a cache hit the plan comes from the cache. |
+| **prefix** | registry | On a first launch, the template copy, its subdirectories on scoped threads over getdents64 and hardlinks, or `wineboot --init` without a template. On every launch, the profile directories. |
+| **wineserver** | prefix | Starts the prefix's wineserver ahead of the session. |
+| **dxvk**, **vkd3d** | prefix, scan | DXVK (`d3d9`, `d3d10core`, `d3d11`, `dxgi`) and VKD3D-Proton (`d3d12`, `d3d12core`) into `system32`, unconditionally: Many games find D3D12 through DXGI at run time. |
+| **nvapi**, **dlss** | prefix, scan | dxvk-nvapi on every NVIDIA box, nvapi64 and nvofapi64 to `system32` and the 32-bit nvapi to `syswow64`; the DLSS modules when the game imports them. |
+| **bridge** | prefix | Valve's `steamclient64.dll`, `steamclient.dll`, `GameOverlayRenderer64.dll` and `Steam.dll` into `Program Files (x86)\Steam` from Steam's `legacycompat/`, and quark's `steam.exe` and `lsteamclient.dll` into `system32`. |
 
-## How a launch works
+### Wineserver Ahead of the Session
 
-Steam runs `proton waitforexitandrun <game.exe> [args]` with the
-`STEAM_COMPAT_*` variables set. `launcher.rs` runs six phases, and a
-second launch of the same game skips straight to the sixth.
+The wineserver needs only the prefix, so it is a node rather than something
+the first Wine process starts on demand. It daemonizes with Wine's default
+persistence of 3 s without a client, is listening by the time the deploys
+and the environment are done, and ends on its own once the session is over.
+A prestart that finds a server already holding the prefix's lock exits 2,
+which is Wine's own signal that one is up.
 
-**1. Locate.** The Wine tree (quark's own deployment of the system Wine,
-or `QUARK_WINE_DIR`), its wineserver, the Steam install and the prefix
-from `STEAM_COMPAT_DATA_PATH`. Every per-launch path derives from these;
-nothing is hardcoded to a user or a home.
+### No Namespace
 
-**2. Prefix.** A new prefix is laid out from the Wine tree's PE modules
-(drivers into `system32\drivers`, where `wine.inf` registers every service
-binary) and seeded with the registry and profile directories of the baked
-template, Proton 11.0's `default_pfx` as `install.py` copied it. The
-launcher's own registry stubs and the Steam keys are injected after the
-seed, never before, since a `.reg` file that exists is never replaced. The
-user the prefix belongs to is read from its registry's `ProfileList`, and
-that one value drives `USER`, which is where Wine takes its own user name
-from, and every profile path the launcher sets. Without a template,
-`wineboot --init` runs as that user. A prefix an older quark split between
-two users heals on its next launch, since shell32 re-expands its shell
-folders and wineboot rewrites the volatile environment.
+The compat tree is Wine's own install layout, and its `bin/wine` is a copy
+of the system loader rather than a link to it. Wine resolves `lib/wine` and
+`share/wine` relative to `/proc/self/exe`, so the patched modules load from
+the tree with no bind mount and `/usr` is never written. A namespace would
+cost a process per GPU initialization: An unprivileged user namespace
+leaves root unmapped, the NVIDIA driver finds its device nodes owned by
+`nobody:nobody`, and its userspace fork-execs the setuid `nvidia-modprobe`
+to repair them, which cannot act inside the namespace, in every Wine
+process that touches the GPU. The installer's smoke test proves the tree
+is used: It runs the tree's `wine --version` under `LD_DEBUG=libs` and
+fails unless the dynamic linker names the tree's `ntdll.so`.
 
-**3. Scan and deploy.** `pe_scanner` reads the game executable's import
-table with positional reads, never the whole file, and reports its render
-API, whether it imports `steam_api`, `nvapi` or `nvngx`. A launcher stub
-with no D3D imports (the Unreal pattern) defers to the shipping binary
-under `Binaries/Win64`. DXVK (`d3d9`, `d3d10core`, `d3d11`, `dxgi`) and
-VKD3D-Proton (`d3d12`, `d3d12core`) are deployed into `system32`
-unconditionally, since many games discover D3D12 through DXGI at run time;
-nvapi and the DLSS modules only on an NVIDIA box whose game imports them.
-A `.quark_deployed` cache holds a hash per component (the Wine tree, DXVK,
-VKD3D-Proton, the Steam client files and the scan) and a component is
-redeployed only when its hash moved.
+### Deploy Cache
 
-**4. Steam client.** Valve's own `steamclient64.dll`, `steamclient.dll`,
-`GameOverlayRenderer64.dll` and `Steam.dll` go into the prefix's
-`Program Files (x86)\Steam` from Steam's `legacycompat/`, on every launch,
-by size and mtime. They have to be Valve's: See
-[The Steam bridge](#the-steam-bridge). quark's `steam.exe` and
-`lsteamclient.dll` go into `system32`.
+One stat per component decides what a launch redeploys: The Wine tree at
+`lib/wine`, DXVK, VKD3D-Proton, Steam's `legacycompat/`, and the game exe
+by size and mtime. The cache file, `.quark_deployed` in the prefix, holds
+the five component hashes, the exe's stamp and the scan's plan, so a launch
+of an unchanged game does no import scan, no DLL copy and no hive read. A
+redeployed launcher binary beside the tree is not a new Wine tree. The
+prefix's user comes from its registry's `ProfileList` in one byte scan of
+the 4 MB `system.reg`, 3 ms where a line-by-line read took 285 ms a call
+at about six calls a launch.
 
-**5. Environment.** One definition of `WINEDLLPATH` and `LD_LIBRARY_PATH`
-shared by the game and wineboot; `WINEDLLOVERRIDES` built from a base
-table (the bridge builtin, the XInput builtins so controllers route
-through winebus, the BattlEye and .NET installer stubs) plus `=n` for
-every DLL deployed in phase 3; `WINETEMP` and `WINETMP`, the channel ntdll
-imports as `TEMP` and `TMP`; the profile variables; `DXVK_LOG_LEVEL` and
-`VKD3D_DEBUG` quiet unless asked; the EasyAntiCheat runtime's `v2` lib
-dirs appended to `WINEDLLPATH` when the Steam tool is installed; and the
-`env_config` file last, so a user's line overrides any of it. Arguments
-stay `OsString` from `args_os()` to Wine, so a game path that is not UTF-8
-launches rather than panicking.
-
-**6. Launch.** Save data under the profile is snapshotted. The command is
-`wine C:\windows\system32\steam.exe <game.exe> [args]`, run inside a
-`bwrap` mount namespace where `/usr/lib/wine` and `/usr/share/wine` are
-quark's tree, so the unmodified system `wine` binary loads the patched
-modules without `/usr` ever being written. The game runs in its own
-process group, under the montauk observer when `QUARK_TRACE=1`. When it
-exits, the group gets SIGTERM, 500 ms for services.exe and wineboot to
-flush their hives, then SIGKILL; the exit status is appended to the game's
-stderr log; and any save file that existed before the launch and is gone
-after it is restored from the snapshot, never one the game just wrote.
-
-## The Steam bridge
+### The Steam Bridge
 
 A Windows game talks to Steam through `steam_api64.dll`, which loads
 `steamclient64.dll` from the path Steam's registry keys name and calls its
 exports. Under Proton those exports are served by `lsteamclient`, a Wine
 builtin whose PE side is the Steamworks interface and whose unix side
 `dlopen`s Steam's own `linux64/steamclient.so` and talks to the running
-client over its IPC. The join between Valve's DLL and the builtin is a
-trampoline in ntdll, Proton's patch ported here as `wine/001`: When a
-module named `steamclient64` loads, ntdll fixes up its imports (the
-`tier0_s64` and `vstdlib_s64` it links against are redirected to ntdll;
-`install.py` builds stubs for them as well), skips its DllMain, loads
-`lsteamclient.dll` beside it and writes trampolines from every export of
-Valve's DLL to the builtin's, flushing the instruction cache after. The
-module is pinned so a `FreeLibrary` can never unmap it from under a
-cached pointer, and the entries survive its unload for the same reason.
+client over its IPC. The join is a trampoline in ntdll, Proton's patch
+ported to upstream Wine as `wine/001`: When a module named `steamclient64`
+loads, ntdll fixes up its imports (the `tier0_s64` and `vstdlib_s64` it
+links against are redirected to ntdll, and the installer builds stubs for
+them as well), skips its DllMain, loads `lsteamclient.dll` beside it and
+writes a trampoline from every export of Valve's DLL to the builtin's,
+flushing the instruction cache after. The module is pinned so a
+`FreeLibrary` can never unmap it from under a cached pointer. A full-path
+load, which is how `steam_api64` loads it, takes the same path, so the
+bridge needs no alias under Valve's names.
 
-That is why phase 4 deploys Valve's DLL and not the builtin under its
-name. The launcher used to copy `lsteamclient.dll` to
-`Program Files (x86)\Steam\steamclient64.dll`, reasoning that the real DLL
-would fail its imports. With the builtin loading under Valve's name, the
-DllMain the trampoline skipped was the bridge's own init: Its unix side
-never loaded, no call ever reached Steam and every game sat in
-`SteamAPI_Init` with a window open and nothing drawn. The loader trace
-showed it in one line each way, `steam.exe` with its `steamclient:DllMain`
-and the game without one; the capture's memory maps confirmed it, the
-game holding `lsteamclient.dll` and no `lsteamclient.so`.
+The prefix holds Valve's DLL, not the builtin under its name. The DllMain
+the trampoline skips belongs to whatever loads as `steamclient64.dll`; with
+the builtin there, the skipped DllMain is the bridge's own init, its unix
+side never loads, and the game waits in `SteamAPI_Init` with a window open
+and nothing drawn.
 
-`steam.exe` is the first process: It creates the Win32 events games check
-for a running Steam, calls `steamclient_init_registry` so the registry
-holds the client paths, creates the "Steam" window `FindWindow` looks for
-and spawns the game as its child. The wineserver's user-process count
-drops to zero when the game and steam.exe exit, and the session ends
-without a kill.
+`steam.exe`, a Wine builtin built from Proton's steam_helper, is the first
+process: It creates the Win32 events games check for a running Steam,
+calls `steamclient_init_registry` so the registry holds the client paths,
+creates the "Steam" window `FindWindow` looks for and spawns the game as
+its child.
 
-## Wine patches
+### Session and Stop
 
-`install.py` clones the Wine source matching the installed Wine, applies
-the patches strictly and in order, and builds only ntdll, kernelbase and
-winepulse from the result. The rest of the tree is the distribution's,
-hardlinked. A patch that does not apply, or a module that builds but does
-not produce its file, fails the install by name. There is no fuzzy apply:
-It once landed a hunk inside a comment, reported success and shipped an
-ntdll that broke winepulse, winegstreamer and the bridge at once.
+The game's command is `wine C:\windows\system32\steam.exe <game.exe>
+[args]`, spawned in a process group of its own with default signal
+dispositions, and the launcher holds the child's pidfd. Steam's Stop
+reaches the launcher as SIGINT or SIGTERM. It forwards the signal to the
+child through `pidfd_send_signal`, which cannot reach a reused pid, and to
+the child's group by pgid, then ends the prefix with `wineserver -k`:
+Wine starts its services and the game outside that group, and the server
+runs in a session of its own, so the prefix's server is the one handle on
+everything the launch started. A normal exit does the opposite and waits
+for the prefix's server to exit on its own, the way Proton's
+`waitforexitandrun` does, so the real game a launcher stub started
+survives the stub. A Stop during that wait still ends it. The tool
+manifest declares `use_tool_subprocess_reaper "1"`.
+
+### Save-Data Protection
+
+Before the spawn, the save directories under the prefix's profile are
+snapshotted as hardlinks, which keep a file's data alive if the game
+deletes it. After the session, a save file that existed before the launch
+and is gone after it is restored from the snapshot; a file the game wrote
+is never overwritten.
+
+### Installer as a Build System
+
+`install.py` is a dependency graph of seventeen steps. Each step declares
+the steps it needs, the files it reads and the files it writes;
+`graphlib.TopologicalSorter` orders them, every ready step runs at once on
+a thread pool, and its log lines carry its name. The rebuilder is a
+verifying trace [2]: On success a step records a hash of its inputs and a
+hash of its outputs, and it is skipped only when both still match, so a
+file another step rewrote brings its producer back rather than shipping
+stale. The runner refuses a graph where two steps claim the same output,
+a failed step's dependents are skipped by name, and a run either produces
+the tree the serial order would or reports an error [3][4]. Patch Wine's
+outputs include every source file its patches touch, read from the
+patches' own `+++ b/` lines.
+
+| Step | Needs | Does |
+|---|---|---|
+| Preflight | | The tools, `/dev/ntsync` (by opening it), Steam's root |
+| Clean | Preflight | Stops each quark-mapped prefix's wineserver with `wineserver -k`, never a global kill, and removes only sockets nothing answers on |
+| Sync wine source | Clean | The Wine source at the installed version, in `~/.cache/quark/wine-src` |
+| Build | Clean | `cargo build --release` |
+| Deploy binaries | Build | `quark` and the `proton` link into `compatibilitytools.d/quark/`, the two VDF manifests |
+| Deploy Wine | Clean | The system Wine tree beside it, `bin/wine` a copy of the loader |
+| Patch Wine | Sync, Deploy Wine | `git apply --check` then apply, each patch, then ntdll and winepulse built |
+| Build stubs | Deploy Wine | `tier0_s64`, `vstdlib_s64` and their 32-bit twins, with clang and lld |
+| Bake prefix | Patch Wine, Build stubs | Proton 11.0's `default_pfx` as the template, its relative symlinks repaired |
+| Steam bridge | Patch Wine, Deploy Wine | lsteamclient and steam.exe from Proton 11.0's source; after Patch Wine, since both rewrite the source tree |
+| GPU translation | Deploy Wine | DXVK 3.1.1, VKD3D-Proton 3.0.1 and dxvk-nvapi 0.9.2 from their release URLs, each verified by sha256 |
+| Deploy drivers | Deploy Wine | The PE driver files |
+| EAC runtime | Deploy Wine | The bridge DLLs from the Proton EasyAntiCheat Runtime tool, if installed |
+| Trace | Patch Wine, Steam bridge | The observer's symbol files, with `--trace` |
+| Prefix sync | the deploys | Every quark-mapped prefix gets real files where Proton left symlinks, then quark's layer on top |
+| Finalize | Prefix sync | `env_config` if absent |
+| Smoke test | Finalize | The tree's own `wine --version`, its `ntdll.so` proven by the dynamic linker |
+
+### Wine Patches
+
+The Wine source matching the installed Wine is cloned, the patches apply
+strictly and in order, and only the modules they touch are built. A patch
+that does not apply, or a module that builds but does not produce its
+file, fails the install by name; there is no fuzzy apply.
 
 | Patch | Mechanism |
 |---|---|
-| `wine/001-ntdll-steamclient-trampoline` | Proton's trampoline on upstream Wine 11.20, above. The renamed tier0/vstdlib import passes its new length, the redirect honors `PROTON_DISABLE_LSTEAMCLIENT`, the instruction cache is flushed after the jumps are written and WoW64 callers go through a 32-bit thunk. |
+| `wine/001-ntdll-steamclient-trampoline` | Proton's trampoline on upstream Wine 11.20. The renamed tier0/vstdlib import passes its new length, the redirect honors `PROTON_DISABLE_LSTEAMCLIENT`, the instruction cache is flushed after the jumps are written and WoW64 callers go through a 32-bit thunk. |
 | `wine/002-ntdll-export-wine-unix-call` | Exports `__wine_unix_call` from the PE ntdll, which the EasyAntiCheat bridge DLLs import. |
 | `wine/003-ntdll-eac-loadorder` | Builtin-first load order for the EasyAntiCheat bridge DLLs, so the runtime's bridge wins over the game's copy. |
 | `wine/004-ntdll-thread-stack-floor` | A floor under small explicit stack reserves of 64-bit threads; WoW64 threads keep the reserve they ask for. |
-| `wine/005-kernelbase-eac-launcher-detection` | `CreateProcess` reads the child's version resource and sets `PROTON_EAC_LAUNCHER_PROCESS` only when its ProductName is "EasyAntiCheat Launcher", removing it from every other child. Proton's approach; the game a launcher started had inherited the flag and loaded the native module instead of the bridge. |
-| `wine/006-kernelbase-steam-openprocess-pid` | `OpenProcess` on Steam's placeholder PID opens the calling process. |
-| `wine/007-winepulse-nonblocking-timing-update` | The timer loop never blocks on a PulseAudio timing update, and keeps at most one in flight, so a stalled server cannot queue one per period. |
+| `wine/005-kernelbase-eac-launcher-detection` | `CreateProcess` sets `PROTON_EAC_LAUNCHER_PROCESS` only for a child whose version resource names it the EasyAntiCheat Launcher. Applies; the module is not deployed until its version.dll calls resolve at run time. |
+| `wine/006-kernelbase-steam-openprocess-pid` | `OpenProcess` on Steam's placeholder PID opens the calling process. Deploys with 005. |
+| `wine/007-winepulse-nonblocking-timing-update` | The timer loop never blocks on a PulseAudio timing update and keeps at most one in flight. |
 | `lsteamclient/001-lsteamclient-link-stdcxx` | Links libstdc++ into the unix library. |
-| `lsteamclient/002-lsteamclient-non-fatal-steam-call` | A failed Steam client call returns instead of faulting. Valve's tree forces an access violation there on purpose; this deviates. |
+| `lsteamclient/002-lsteamclient-non-fatal-steam-call` | A failed Steam client call returns instead of faulting. |
 
-Dropped on the way to v0.1.0, each checked against Wine 11.20, Proton 11.0
-and Proton's Wine: Everything written against the deleted wineserver
-replacement, the fast-boot and standalone-plugplay pair (which kept
-services.exe from starting, so no winedevice, no controllers and no
-wineserver shutdown), the view band that 11.20's address-space rework made
-moot, and the lsteamclient API-compat patch that Proton 11 fixed upstream.
-
-## Anti-cheat
+### Anti-cheat
 
 EasyAntiCheat follows Proton's model: The bridge DLLs come from Valve's
-"Proton EasyAntiCheat Runtime" Steam tool, whose `v2/lib32` and
-`v2/lib64` join `WINEDLLPATH` after the Wine tree's; patches 002 and 003
-give them their export and load order; patch 005 marks the launcher
-process. 005 and 006 live in kernelbase, which `install.py` builds but
-does not deploy yet, so the launcher detection is not active in v0.1.0.
-No EasyAntiCheat title has been run. BattlEye is not wired at all.
+"Proton EasyAntiCheat Runtime" Steam tool, whose `v2/lib32` and `v2/lib64`
+join `WINEDLLPATH` after the Wine tree's; patches 002 and 003 give them
+their export and load order, and 005 marks the launcher process. VAC needs
+nothing from quark; the game talks to the real Steam client through the
+bridge.
 
-VAC needs nothing from quark; the game talks to the real Steam client
-through the bridge.
+## Architecture
+
+```
+rust/src/quark/
+  main.rs              Entry point; the verb from argv
+  cli.rs               The four verbs Steam speaks to a compatibility tool
+  launcher.rs          Locate, the launch graph's nodes, the environment, the
+                         spawn, the session and its end, save-data protection
+  graph.rs             The launch graph's executor: Kahn's algorithm on scoped
+                         threads, outputs keyed by node, per-node timings
+  pe_scanner.rs        The game exe's import table, read positionally
+  log.rs               The [HH:MM:SS] [LEVEL] macros
+install.py             The installer: a step graph with verifying traces
+quark_common.py        Paths, logger, Steam and game discovery, Wine process
+                         hygiene; imported by install.py and every test
+patches/
+  wine/                001-007
+  lsteamclient/        001-002
+tests/
+  run.py               The one entry point: suite, launch, scoreboard, qemu,
+                         heap-repro
+  harness/             The game harness: base, tools, procs, trace, metrics,
+                         sched, baselines, launch, scoreboard
+  rust/                launcher.rs, pe_scanner.rs: the cargo tests, each
+                         compiling the source module it covers
+  verify_patches.py    Deployed package and patch verification
+  test_package.py      The compat tool layout
+  test_steam_safety.py The Steam-safe scoping gate
+  heap_repro/          The heap-corruption repro
+  qemu/                guest.py (host side), suite.py (inside the VM),
+                         probes/*.c
+PKGBUILD
+```
+
+### Data Flow
+
+```
+Steam
+  └─ proton waitforexitandrun <game.exe>          (quark, by its proton link)
+       ├─ locate: Wine tree, Steam, prefix, cache stats
+       ├─ launch graph
+       │    registry ── prefix ──┬── wineserver (ahead of the session)
+       │    scan ────────────────┼── dxvk, vkd3d, nvapi, dlss
+       │                         └── bridge
+       ├─ environment
+       ├─ save snapshot (hardlinks)
+       └─ spawn: bin/wine steam.exe <game.exe>    (own pgid, pidfd held)
+            └─ steam.exe ── lsteamclient ── Steam client IPC
+                 └─ game
+       end: Stop → pidfd and pgid signal, wineserver -k
+            exit → wait for the prefix's server, then save restore
+```
 
 ## Requirements
 
-- Linux 6.14 or newer with `/dev/ntsync`. On Arch, `wine` pulls in
-  `ntsync-autoload`; until the next boot, `sudo modprobe ntsync`. Wine
-  11.20 uses the device on its own when it is present; no variable turns
-  it on.
-- Wine 11.20 from the distribution. quark deploys that tree and runs its
-  wineserver; `install.py` rebuilds only the modules the patches touch,
-  from the matching source.
+- Wine 11.20 from the distribution; the installer clones its source at
+  that version.
+- `/dev/ntsync`, used when it opens. On Arch, `wine` pulls in
+  `ntsync-autoload`; until the next boot, `sudo modprobe ntsync`.
 - Steam, with the multilib repo enabled, a 32-bit Vulkan driver for the
-  GPU (`lib32-nvidia-utils`, `lib32-vulkan-radeon` or `lib32-vulkan-intel`)
-  and `lib32-libpulse` or `lib32-pipewire`.
-- Proton 11.0 installed in Steam (Library → Tools). `install.py` takes the
-  prefix template from its `default_pfx` and the lsteamclient source tag
-  from its version, and stops by name without it.
-- `bubblewrap`, for the mount namespace. Without it the launcher execs
-  `wine` directly against the unpatched system tree and says so.
-- Build tools: `rust` 1.85+, `clang` and `lld` (the tier0/vstdlib stubs
-  are built with them; no mingw), `llvm`, `git`, `autoconf`, `bison`,
-  `flex`, `base-devel`, `rsync`, and the Wine build dependencies for ntdll,
-  kernelbase and winepulse.
-
-On Arch Linux:
+  GPU and `lib32-libpulse` or `lib32-pipewire`.
+- Proton 11.0 installed in Steam (Library → Tools), for the prefix template
+  and the lsteamclient source tag.
+- Rust 1.85+, clang and lld, llvm, git, patch, autoconf, bison, flex,
+  base-devel, rsync, and the Wine build dependencies for ntdll and
+  winepulse. `ccache` is used for the host compiler when present.
 
 ```bash
-sudo pacman -S --needed steam wine wine-mono bubblewrap rust clang lld llvm \
-  git autoconf bison flex base-devel rsync gnutls libxslt libgphoto2 \
+# Arch Linux
+sudo pacman -S --needed steam wine wine-mono rust clang lld llvm git patch \
+  autoconf bison flex base-devel rsync gnutls libxslt libgphoto2 \
   libpulse alsa-lib alsa-plugins openal libxcomposite libxinerama \
   libxrandr libxcursor libxi libxxf86vm libxdamage libxfixes libxkbcommon \
   wayland fontconfig freetype2 sdl2-compat v4l-utils libusb \
@@ -257,197 +382,128 @@ sudo pacman -S --needed steam wine wine-mono bubblewrap rust clang lld llvm \
   lib32-libpulse
 ```
 
-Add the GPU's 32-bit Vulkan driver to that line. `wine-mono` is what .NET
+Add the GPU's 32-bit Vulkan driver (`lib32-nvidia-utils`,
+`lib32-vulkan-radeon` or `lib32-vulkan-intel`). `wine-mono` is what .NET
 and FNA games run on.
 
-## Install
+## Build & Install
 
 ```bash
-./install.py          # asks before anything destructive
-./install.py --yes    # answers every prompt
+./install.py            # asks before anything destructive
+./install.py --yes      # answers every prompt
+./install.py --trace    # also turns the montauk observer on for every launch
 ```
 
-The steps, in order, each bounded by a timeout and each failing by name:
+Then restart Steam fully (Steam → Exit; Steam reads
+`compatibilitytools.d` only at startup), open a game's Properties →
+Compatibility, tick "Force the use of a specific Steam Play compatibility
+tool" and pick **quark 0.2.0**. Steam fetches the Windows build of a game
+it had installed natively.
 
-| Step | What it does |
-|---|---|
-| Preflight | The tools above, the kernel version, `/dev/ntsync`, Steam's root |
-| Clean | Stops each quark-mapped prefix's wineserver with `wineserver -k` (never a global kill), removes only sockets nothing answers on; `--wipe-prefixes` also removes those prefixes and shader caches |
-| Sync wine source | Clones the Wine source at the installed version into `/tmp/quark-wine-build`, with a manifest gate so an unchanged source and patch set skips the rebuild |
-| Build | `cargo build --release` |
-| Deploy binaries | `quark` and the `proton` link into `compatibilitytools.d/quark/`, the two VDF manifests |
-| Deploy Wine | The system Wine tree beside it, hardlinked where possible; `bin/wineserver` is the system wineserver |
-| Patch Wine | `git apply --check` then apply, each patch, then configure and build ntdll, kernelbase and winepulse |
-| Bake prefix | Proton 11.0's `default_pfx` copied as the template, its relative symlinks repaired to real files |
-| Build stubs | `tier0_s64`, `vstdlib_s64` and their 32-bit twins with clang and lld |
-| Steam bridge | lsteamclient and steam.exe from Proton 11.0's source, the two patches applied strictly |
-| GPU translation | DXVK, VKD3D-Proton and dxvk-nvapi from their GitHub releases |
-| Deploy drivers | The PE driver files from Proton or the system Wine |
-| EAC runtime | The bridge DLLs from the Proton EasyAntiCheat Runtime tool, if installed |
-| Prefix sync | Every prefix already mapped to quark gets real files where Proton left symlinks, then quark's layer on top |
-| Finalize | `env_config` written if absent |
-| Smoke test | `wine --version` inside the bwrap namespace against the deployed tree |
-
-Then restart Steam fully (Steam → Exit, not the window's close button;
-Steam reads `compatibilitytools.d` only at startup), open a game's
-Properties → Compatibility, tick "Force the use of a specific Steam Play
-compatibility tool" and pick **quark 0.1.0**. Steam fetches the Windows
-build of a game it had installed natively.
-
-`./install.py --trace` turns the observer on for every launch: It runs
-montauk's own installer, symbolicates the patched modules to Breakpad
-`.sym` files and sets `QUARK_TRACE=1` and `QUARK_TRACE_OUT=1` in
-`env_config`.
-
-### Configuration
+## Usage
 
 `~/.local/share/Steam/compatibilitytools.d/quark/env_config` holds
 `KEY=VALUE` lines read on every launch; a line there overrides the
-launcher's own value for the same key, for every game.
+launcher's own value for the same key. Any of them also works for one game
+in Steam's launch options, as `QUARK_VERBOSE=1 %command%`.
 
 | Variable | Effect |
 |---|---|
-| `QUARK_VERBOSE=1` | Launcher diagnostics as `[DEBUG]` lines, and Wine's `+process,err` channels in `wine_stderr.log` |
-| `QUARK_TRACE=1` | Start montauk beside the game; the pattern covers the game, steam.exe and the wineserver |
+| `QUARK_VERBOSE=1` | The launcher's `[DEBUG]` lines, the per-node timing line among them, and Wine's `+process,err` channels |
+| `QUARK_TRACE=1` | montauk beside the game, covering the game, steam.exe and the wineserver |
 | `QUARK_TRACE_OUT=1` | With `QUARK_TRACE`, keep the capture as `/tmp/quark/incidents/<game>-io.bin` |
-| `QUARK_WINE_DIR=/path` | Launch with another Wine tree than the one install.py deployed |
+| `QUARK_WINE_DIR=/path` | Launch with another Wine tree than the one the installer deployed |
 | `WINEDEBUG=...` | Passed through as given; otherwise `-all`, or `+process,err` under `QUARK_VERBOSE` |
-
-Any of them works for one game in Steam's launch options, as
-`QUARK_VERBOSE=1 %command%`.
 
 ### Logs
 
-Everything lands in `/tmp/quark/`: `wine_stderr.log` and
-`wine_stdout.log` for the last launch (truncated each time), and
+`/tmp/quark/`: `wine_stderr.log` and `wine_stdout.log` for the last
+launch, `launcher_stderr.log` for the launcher's own lines, and
 `incidents/` for the montauk capture, the process memory maps and a copy
-of the game's stderr with its exit status, kept per game when tracing is
-on.
+of the game's stderr with its exit status.
 
-## Testing
+### Diagnosing a Launch
 
-```bash
-python3 tests/run.py                        # every layer
-python3 tests/run.py --layer unit           # cargo test (24 tests)
-python3 tests/qemu/guest.py provision       # once: the VM image
-python3 tests/qemu/guest.py test            # the suite in the VM
-python3 tests/iterate.py --appid 2379780 --timeout 60 --trace
-python3 tests/iterate.py --appid 367520 --compat-tool proton-exp
-```
-
-`tests/run.py` is the one entry point, in layers that each end in a
-bounded step: `unit` runs the Rust tests under `tests/rust/`, declared as
-`[[test]]` targets that compile the source module they cover (the
-launcher against fixture trees: Environment assembly, the deploy cache,
-DLL deployment, registry seeding, the profile user, the driver layout,
-the Steam client files and save-data restore; the PE scanner against
-synthetic PE32+ images); `gate` the Steam-safe process scoping, with no
-install; `deploy` the deployed package layout and `verify_patches.py`,
-which derives each source check from the patch itself (the longest line
-it adds to each file) and checks the binaries for the strings, symbols
-and PE exports the patches compile in; `launch` a real game through
-`iterate.py`; and `qemu` the suite below. A layer that cannot run reports
-SKIP, never PASS.
-
-`tests/qemu/guest.py` runs the whole thing in a disposable Arch guest over
-KVM with no host root: The official cloud image, checksum-verified; a
-provisioned overlay with Wine 11.20, the toolchain, Xvfb, lavapipe and a
-stand-in Steam root whose "Proton" template is a stock `wineboot --init`
-prefix built as steamuser; a fresh run overlay per run; and a persistent
-build-cache disk so the patched Wine and montauk builds carry across runs.
-Inside, `suite.py` installs quark for real, builds montauk from the
-sibling tree and gives it its tracing capabilities, then launches seven
-mingw probes through the launcher the way Steam would, each writing a
-PASS/FAIL verdict file, each under the observer, and analyzes a failed
-probe's capture to JSON beside its verdict. The results come back to
-`/tmp/quark-suite/qemu/<stamp>/`.
-
-`tests/iterate.py` drives one installed game, or every one, on the host:
-Build, install, launch with the Steam environment Steam would set, stderr
-milestones (`x11drv`, `XRandR`, `LÖVE`, `STEAM_API`, `CRASH`), checkpoint
-screenshots, an optional montauk capture, a verdict and the logs archived
-under `/tmp/quark/runs/`. `--compat-tool proton-exp` runs the same game
-through stock Proton Experimental, which is the A/B that separates a quark
-bug from a driver or a game bug in one run. Note that a Proton run
-upgrades the shared prefix to Proton's layout; move it aside first if the
-quark prefix matters.
-
-## Diagnosing a launch
-
-The instrument is [montauk](https://github.com/wllclngn/montauk), the
-eBPF flight recorder, and the rule is that a capture gets analyzed before
-any log gets read. quark's installer does not need it; the observer does.
-With `QUARK_TRACE=1` and `QUARK_TRACE_OUT=1` every launch leaves
-`/tmp/quark/incidents/<game>-io.bin`, and:
+A capture is analyzed before any log is read:
 
 ```bash
 montauk --analyze /tmp/quark/incidents/<game>-io.bin --json        # the full report set
 montauk --analyze <cap> --select ntsync --where comm=<game> --by tid,op,result --count --json
-montauk --analyze <cap> --select io --where comm=steam.exe --by syscall_nr --count --json
+montauk --analyze <cap> --select exec --by comm --count --json
 ```
 
-Two examples from the road to v0.1.0, both games showing a window and
-nothing in it:
+A report is most useful with the game's stderr and the launcher's, the
+capture or its `--analyze --json` output, the GPU and driver, and whether
+the same game reaches its menu under Proton Experimental on the same box
+(`tests/run.py launch <appid> --tool proton-exp`).
 
-**The split prefix.** Hollow Knight's capture showed no crash, no spin
-and every game thread parked; DXVK's own log stopped after device
-creation; Unity had never written its `Player.log`. The registry answered:
-`Shell Folders` held `AppData`, `Local AppData` and `LocalLow` under
-`C:\users\<host user>` and the rest under `C:\users\steamuser`, written
-during the run. shell32 expands `%USERPROFILE%` through `GetUserNameW`,
-which upstream Wine answers from `$USER`, which the launcher never set; it
-had hand-written a dozen `steamuser` paths instead. One source of truth
-now: The prefix's `ProfileList` names the user, `USER` carries it to Wine
-and every path derives from it.
+## Testing
 
-**The bridge under Valve's name.** With the profile fixed, `Player.log`
-ended at "Steam initializing", where Proton's continued with "Steam logged
-in". The capture's memory maps had `steam.exe` holding both halves of the
-bridge and the game holding only the PE half; the loader trace had
-`steamclient:DllMain` for steam.exe and `process_attach START/END` with no
-DllMain for the game. Patch 001 skips the DllMain of whatever loads as
-`steamclient64.dll`, and the launcher had put the builtin there. Valve's
-DLL goes there now, and the next run logged in.
-
-The instrument improved along the way as well: Python f-strings and
-`finally` in montauk's static reader, the unknown-field error, `\b` in
-the regex face and a multi-name trace that missed a process renamed
-before attach were each filed from a quark capture and fixed in montauk.
-
-## Reporting a problem
-
-Run the game once with tracing on, then attach
-
-- `/tmp/quark/wine_stderr.log`,
-- `/tmp/quark/incidents/<game>-io.bin`, or the output of
-  `montauk --analyze /tmp/quark/incidents/<game>-io.bin --json`,
-- the game, the GPU and driver, and `wine --version`.
-
-Whether the same game reaches its menu under Proton Experimental on the
-same box (`tests/iterate.py --appid <id> --compat-tool proton-exp`) is the
-single most useful extra fact.
-
-## Project structure
-
+```bash
+python3 tests/run.py                          # the suite, every layer
+python3 tests/run.py suite --layer unit       # one layer (repeatable)
+python3 tests/run.py launch 379720 --trace    # one game, under a montauk capture
+python3 tests/run.py launch --all             # every installed Windows game
+python3 tests/run.py qemu provision           # once: The VM image
+python3 tests/run.py qemu test                # the suite in a disposable VM
+python3 tests/run.py scoreboard               # the end-of-version table
 ```
-quark/
-├── rust/src/quark/        launcher.rs, pe_scanner.rs, cli.rs, log.rs, main.rs
-├── install.py             the installer
-├── quark_common.py        paths, logger, Steam discovery, Wine process hygiene
-├── patches/wine/          001-007
-├── patches/lsteamclient/  001-002
-├── tests/
-│   ├── run.py             the layered runner
-│   ├── rust/              launcher.rs, pe_scanner.rs (the cargo tests)
-│   ├── iterate.py         the game harness
-│   ├── verify_patches.py  deployed package and patch verification
-│   ├── test_package.py    the compat tool layout
-│   └── qemu/              guest.py, suite.py, probes/*.c
-├── Cargo.toml             the workspace root; the crate is rust/
-├── PKGBUILD
-└── LICENSE
-```
+
+`tests/run.py` is the one entry point; every other file under `tests/` is
+a module it calls, apart from `qemu/suite.py`, which runs inside the VM.
+Each layer step runs as its own bounded subprocess, so a hung test fails on
+its timeout, and a layer that cannot run reports SKIP, never PASS.
+
+| Layer | Covers |
+|---|---|
+| unit | The Rust tests under `tests/rust/`, each a `[[test]]` target compiling the module it covers: Environment assembly, the deploy cache, DLL deployment, registry seeding, the profile user, the driver layout, the Steam client files, save-data restore, and the PE scanner against synthetic PE32+ images |
+| gate | Steam-safe process scoping, with no install: No bare-name kill anywhere in the harness, and discovery that returns nothing with no quark running |
+| deploy | The deployed package's layout; every patch's added lines in the source, and the strings, symbols and PE exports it compiles in; the tree's loader a copy |
+| launch | Balatro through the harness |
+| qemu | The whole suite in a disposable Arch guest over KVM with no host root: The real install, then seven mingw probes through the launcher under montauk (Direct3D 11 through DXVK on lavapipe, audio, the window and message pump, the environment and registry, threads and sync, the Steam bridge with no Steam, and a GL plus audio stress) |
+
+`launch` is the harness: Build, install, launch with the environment Steam
+would set, a 50 ms watcher for the game's process and window, stderr
+milestones, checkpoint screenshots, an optional capture, and a verdict:
+`timeout` for a game still running at the deadline, `crash` or `exit` for
+one that ended before it, decided by Wine's own crash lines since steam.exe
+returns 0 for a game killed by signal. quark is the tool under test; a
+stock Proton exists only behind `--tool`.
+
+`scoreboard` is the sanity check at the end of a version, run by hand and
+never a layer: Every game through quark and any Proton tool named with
+`--tools` or `--all-tools`, once per scheduler with
+`--schedulers pandemonium,eevdf`, written to `tests/scoreboard.md` after
+every cell.
+
+## Attribution
+
+- `lsteamclient` and `steam_helper` are built from the source of Valve's
+  [Proton](https://github.com/ValveSoftware/Proton) 11.0, and `wine/001`
+  ports Proton's steamclient trampoline to upstream Wine.
+- [DXVK](https://github.com/doitsujin/dxvk),
+  [VKD3D-Proton](https://github.com/HansKristian-Work/vkd3d-proton) and
+  [dxvk-nvapi](https://github.com/jp7677/dxvk-nvapi) are deployed from
+  their own releases.
+- Wine is the distribution's, with the seven patches above.
+
+## References
+
+[1] A.B. Kahn. "Topological Sorting of Large Networks." *Communications of
+the ACM* 5(11), 558-562, 1962.
+
+[2] A. Mokhov, N. Mitchell, S. Peyton Jones. "Build Systems à la Carte:
+Theory and Practice." *Journal of Functional Programming* 30, 2020.
+[doi:10.1017/S0956796820000088](https://doi.org/10.1017/S0956796820000088)
+
+[3] S. Spall, N. Mitchell, S. Tobin-Hochstadt. "Build Scripts with Perfect
+Dependencies." *OOPSLA 2020*.
+[doi:10.1145/3428237](https://doi.org/10.1145/3428237)
+
+[4] S. Spall, N. Mitchell, S. Tobin-Hochstadt. "Forward Build Systems,
+Formally." *CPP 2022*.
+[doi:10.1145/3497775.3503687](https://doi.org/10.1145/3497775.3503687)
 
 ## License
 
-GPL-2.0, see the [`LICENSE`](LICENSE) file.
+GPL-2.0

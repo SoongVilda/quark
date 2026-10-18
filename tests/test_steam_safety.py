@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Steam-safety regression test for iterate.py.
+"""Steam-safety regression test for the harness (tests/harness/).
 
-Background: iterate.py used to sign the user out of Steam every time it
+Background: The harness used to sign the user out of Steam every time it
 ran. Root cause was Phase 3 of cleanup_processes — it scanned EVERY
 process owned by the user with `ps -u $UID -o pid,args` and SIGKILL'd
 anything whose cmdline contained `.exe`, `wineserver`, `wine64-preloader`,
@@ -15,9 +15,9 @@ corrupted and force a re-login.
 
 This test enforces two invariants:
 
-  1. iterate.py source contains no `pkill -<sig> -f <bare-name>` calls
+  1. the harness source contains no `pkill -<sig> -f <bare-name>` calls
      where <bare-name> is one of the forbidden substrings.
-  2. iterate.py's process-discovery code (cleanup_processes,
+  2. the harness's process-discovery code (cleanup_processes,
      find_wine_pids) NEVER returns PIDs that don't pass the quark-tree
      scoping check (binary inside COMPAT_DIR OR descendant of such).
 
@@ -34,7 +34,7 @@ from pathlib import Path
 
 TESTS_DIR = Path(__file__).parent
 REPO_ROOT = TESTS_DIR.parent
-ITERATE_PY = TESTS_DIR / "iterate.py"
+HARNESS_FILES = sorted((TESTS_DIR / "harness").glob("*.py"))
 
 # Substrings that, when used as bare pkill patterns, hit Steam's helpers
 # or other Proton games' wineservers. NEVER allow these in a pkill cmd.
@@ -49,15 +49,15 @@ FORBIDDEN_BARE_PATTERNS = [
 
 
 class TestNoBarePkillPatterns(unittest.TestCase):
-    """Static check: iterate.py must not pkill on bare names that match
+    """Static check: the harness must not pkill on bare names that match
     Steam helpers or stock Proton wineservers."""
 
-    def test_no_bare_pkill_in_iterate_py(self):
-        src = ITERATE_PY.read_text()
+    def test_no_bare_pkill_in_harness(self):
+        src = "\n".join(f.read_text() for f in HARNESS_FILES)
         # Find every pkill invocation: pkill -<flag> <pattern> or
         # subprocess.run(["pkill", "-<flag>", "-f", "<pattern>"], ...)
         # We look for string literals that pkill receives as patterns.
-        # Conservative: scan for `"pkill"` and inspect the surrounding
+        # Conservative: Scan for `"pkill"` and inspect the surrounding
         # 200 chars for forbidden bare patterns.
         offenders = []
         for m in re.finditer(r'"pkill"', src):
@@ -80,7 +80,7 @@ class TestNoBarePkillPatterns(unittest.TestCase):
                     offenders.append((bad, window[:160].replace("\n", " ")))
         self.assertEqual(
             offenders, [],
-            "Found forbidden bare pkill pattern(s) in iterate.py — these "
+            "Found forbidden bare pkill pattern(s) in the harness — these "
             "match Steam's own processes:\n" +
             "\n".join(f"  '{bad}' near: {ctx}..." for bad, ctx in offenders)
         )
@@ -90,7 +90,7 @@ class TestNoBarePkillPatterns(unittest.TestCase):
         into discovery results — even if we don't SIGKILL them, surfacing
         them in find_wine_pids() leads to follow-up code (snapshots,
         analysis) that may eventually kill them."""
-        src = ITERATE_PY.read_text()
+        src = "\n".join(f.read_text() for f in HARNESS_FILES)
         offenders = []
         for m in re.finditer(r'"pgrep"', src):
             window = src[m.start():m.start() + 300]
@@ -105,7 +105,7 @@ class TestNoBarePkillPatterns(unittest.TestCase):
                     offenders.append((bad, window[:160].replace("\n", " ")))
         self.assertEqual(
             offenders, [],
-            "Found forbidden bare pgrep pattern(s) in iterate.py:\n" +
+            "Found forbidden bare pgrep pattern(s) in the harness:\n" +
             "\n".join(f"  '{bad}' near: {ctx}..." for bad, ctx in offenders)
         )
 
@@ -119,10 +119,10 @@ class TestQuarkPidScoping(unittest.TestCase):
     def setUp(self):
         sys.path.insert(0, str(TESTS_DIR))
         import importlib
-        if "iterate" in sys.modules:
-            importlib.reload(sys.modules["iterate"])
-        import iterate
-        self.iterate = iterate
+        if "harness.procs" in sys.modules:
+            importlib.reload(sys.modules["harness.procs"])
+        from harness import procs
+        self.iterate = procs
 
     def tearDown(self):
         if str(TESTS_DIR) in sys.path:
@@ -131,7 +131,7 @@ class TestQuarkPidScoping(unittest.TestCase):
     def test_empty_when_no_quark_processes(self):
         """Sanity: with quark not running, discovery returns nothing.
         If this returns anything, the scoping has leaked outside COMPAT_DIR."""
-        # Verify: we are NOT currently running anything from COMPAT_DIR.
+        # Verify: We are NOT currently running anything from COMPAT_DIR.
         # If the user happens to have quark running, skip — test isn't
         # meaningful then.
         natives = self.iterate._quark_native_pids()
@@ -169,7 +169,7 @@ class TestQuarkPidScoping(unittest.TestCase):
         finally:
             parent.kill()
             parent.wait()
-        # Real fork chain via subprocess: each bash -c launches a child
+        # Real fork chain via subprocess: Each bash -c launches a child
         # that runs `sleep`, which is a separate PID.
         # Use `; :` to defeat bash's single-command exec optimization, so
         # each shell genuinely forks its child.
@@ -197,7 +197,3 @@ def run_tests():
     runner = unittest.TextTestRunner(verbosity=2)
     result = runner.run(suite)
     return 0 if result.wasSuccessful() else 1
-
-
-if __name__ == "__main__":
-    sys.exit(run_tests())

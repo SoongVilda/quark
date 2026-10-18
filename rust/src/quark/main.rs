@@ -4,6 +4,7 @@
 
 mod log;
 mod cli;
+mod graph;
 mod launcher;
 mod pe_scanner;
 
